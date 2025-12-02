@@ -18,7 +18,7 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- SESSION STATE (HAFIZA) BAŞLATMA ---
+# --- SESSION STATE (GÜVENLİ BAŞLATMA) ---
 if 'analiz_yapildi' not in st.session_state:
     st.session_state['analiz_yapildi'] = False
 if 'sonuclar' not in st.session_state:
@@ -90,7 +90,6 @@ def ozet_rapor_olustur(df_biz, df_onlar):
     ozet['Kümüle_Fark'] = ozet['Biz_Bakiye'] + ozet['Onlar_Bakiye']
     
     ozet['Yil_Ay'] = ozet['Yil_Ay'].astype(str)
-    
     cols = ['Para_Birimi', 'Yil_Ay', 'Biz_Borc', 'Biz_Alacak', 'Biz_Bakiye', 
             'Onlar_Borc', 'Onlar_Alacak', 'Onlar_Bakiye', 'Kümüle_Fark']
     return ozet[cols]
@@ -151,7 +150,6 @@ def veri_hazirla_ve_grupla(df, config, taraf_adi, is_insurance_mode=False, extra
     if "Tek Kolon" in config['tutar_tipi']:
         col_name = config['tutar_col']
         ham_tutar = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
-        
         if not doviz_aktif: df_new['Doviz_Tutari'] = 0.0
         
         rol = config.get('rol_kodu', 'Biz Alıcıyız') 
@@ -342,11 +340,10 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
                         if mid not in onlar_dict_id: onlar_dict_id[mid] = []
                         onlar_dict_id[mid].append(row)
                     
-                    if not is_insurance:
-                        pid = row['Payment_ID']
-                        if pid and len(pid) > 2:
-                            if pid not in onlar_dict_pay_id: onlar_dict_pay_id[pid] = []
-                            onlar_dict_pay_id[pid].append(row)
+                    pid = row['Payment_ID']
+                    if pid and len(pid) > 2:
+                        if pid not in onlar_dict_pay_id: onlar_dict_pay_id[pid] = []
+                        onlar_dict_pay_id[pid].append(row)
                         
                     val_borc = round(row['Borc'], 2)
                     val_alacak = round(row['Alacak'], 2)
@@ -395,118 +392,83 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
                             
                             return data
 
-                        # SİGORTA MODU
-                        if is_insurance:
+                        # --- EŞLEŞTİRME MANTIĞI (MUTLAK DEĞER) ---
+                        
+                        # 1. FATURA NO
+                        mid = row['Match_ID']
+                        if mid and mid in onlar_dict_id:
+                            candidates = onlar_dict_id[mid]
+                            unused_candidates = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
+                            pool = unused_candidates if unused_candidates else candidates
+                            best_candidate = None
+                            min_diff_abs = float('inf')
+                            
+                            filtered_pool = [c for c in pool if c['Para_Birimi'] == row['Para_Birimi']]
+                            search_pool = filtered_pool if filtered_pool else pool
+                            
+                            for cand in search_pool:
+                                # MUTLAK DEĞER FARKI (Yön Bağımsız)
+                                # abs(Bizim) - abs(Onlar) farkı 0 mı?
+                                diff_abs = abs(abs(cand[aranan_yon]) - abs(aranan_tutar))
+                                if diff_abs < min_diff_abs:
+                                    min_diff_abs = diff_abs
+                                    best_candidate = cand
+                            
+                            if best_candidate is not None:
+                                match_found = True
+                                matched_onlar_indices.add(best_candidate['unique_idx'])
+                                
+                                real_fark_tl = aranan_tutar - best_candidate[aranan_yon]
+                                real_fark_doviz = 0
+                                durum = ""
+                                is_tl_match = min_diff_abs < 0.1
+                                is_doviz_match = True
+                                is_try = row['Para_Birimi'] in ['TRY', 'TL']
+                                
+                                if doviz_raporda:
+                                    real_fark_doviz = row['Doviz_Tutari'] - best_candidate['Doviz_Tutari']
+                                    if not is_try: is_doviz_match = abs(real_fark_doviz) < 0.1
+                                    else: real_fark_doviz = 0
+                                
+                                if is_tl_match and is_doviz_match: durum = "✅ Tam Eşleşme"
+                                elif is_tl_match: durum = "⚠️ Kur Farkı"
+                                else: durum = "❌ Tutar Farkı"
+                                
+                                eslesenler.append(make_row(durum, best_candidate, real_fark_tl, real_fark_doviz))
+
+                        # 2. ÖDEME REF NO
+                        pid = row['Payment_ID']
+                        if not match_found and pid and len(pid) > 2:
+                            if pid in onlar_dict_pay_id:
+                                candidates = onlar_dict_pay_id[pid]
+                                unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
+                                best_candidate = None
+                                min_diff = float('inf')
+                                for cand in (unused if unused else candidates):
+                                    # Mutlak değer eşleşmesi
+                                    diff = abs(abs(cand[aranan_yon]) - abs(aranan_tutar))
+                                    if diff < min_diff: min_diff = diff; best_candidate = cand
+                                
+                                if best_candidate is not None and min_diff < 0.1:
+                                    match_found = True
+                                    matched_onlar_indices.add(best_candidate['unique_idx'])
+                                    eslesen_odemeler.append(make_row("✅ Referans Eşleşmesi", best_candidate, 0.0))
+
+                        # 3. TARİH + TUTAR
+                        if not match_found:
                             key = f"{round(aranan_tutar, 2)}_{row['Para_Birimi']}"
                             if key in onlar_dict_tutar:
                                 candidates = onlar_dict_tutar[key]
                                 unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
                                 best_match = None
                                 for cand in (unused if unused else candidates):
-                                    if pd.notna(row['Tarih']) and pd.notna(cand['Tarih']):
-                                        if row['Tarih'] == cand['Tarih']: 
-                                            best_match = cand
-                                            break
+                                    if pd.notna(row['Tarih_Odeme']) and pd.notna(cand['Tarih_Odeme']):
+                                        days_diff = abs((row['Tarih_Odeme'] - cand['Tarih_Odeme']).days)
+                                        if days_diff <= 3: best_match = cand; break
                                 if best_match is not None:
                                     matched_onlar_indices.add(best_match['unique_idx'])
-                                    eslesen_odemeler.append(make_row("✅ Tarih/Tutar Eşleşmesi", best_match, 0.0, 0.0))
+                                    eslesen_odemeler.append(make_row("✅ Ödeme/Tarih Eşleşmesi (±3 Gün)", best_match, 0.0, 0.0))
                                     match_found = True
-
-                            mid = row['Match_ID']
-                            if not match_found and mid and mid in onlar_dict_id:
-                                candidates = onlar_dict_id[mid]
-                                unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                pool = unused if unused else candidates
-                                best_candidate = None
-                                min_diff_abs = float('inf')
-                                for cand in pool:
-                                    diff = abs(cand[aranan_yon] - aranan_tutar)
-                                    if diff < min_diff_abs:
-                                        min_diff_abs = diff
-                                        best_candidate = cand
-                                
-                                if best_candidate is not None:
-                                    match_found = True
-                                    matched_onlar_indices.add(best_candidate['unique_idx'])
-                                    real_fark_tl = aranan_tutar - best_candidate[aranan_yon]
-                                    real_fark_doviz = 0
-                                    
-                                    durum = ""
-                                    is_tl_match = min_diff_abs < 0.1
-                                    is_doviz_match = True
-                                    if doviz_raporda:
-                                        real_fark_doviz = row['Doviz_Tutari'] - best_candidate['Doviz_Tutari']
-                                        is_try = row['Para_Birimi'] in ['TRY', 'TL']
-                                        if not is_try: is_doviz_match = abs(real_fark_doviz) < 0.1
-                                    
-                                    if is_tl_match and is_doviz_match: durum = "✅ Tam Eşleşme"
-                                    elif is_tl_match: durum = "⚠️ Kur Farkı"
-                                    else: durum = "❌ Tutar Farkı"
-                                    eslesenler.append(make_row(durum, best_candidate, real_fark_tl, real_fark_doviz))
-
-                        else:
-                            # C/H MODU
-                            pid = row['Payment_ID']
-                            if not match_found and pid and len(pid) > 2:
-                                if pid in onlar_dict_pay_id:
-                                    candidates = onlar_dict_pay_id[pid]
-                                    unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                    best_candidate = None
-                                    min_diff = float('inf')
-                                    for cand in (unused if unused else candidates):
-                                        diff = abs(cand[aranan_yon] - aranan_tutar)
-                                        if diff < min_diff: min_diff = diff; best_candidate = cand
-                                    
-                                    if best_candidate is not None and min_diff < 0.1:
-                                        match_found = True
-                                        matched_onlar_indices.add(best_candidate['unique_idx'])
-                                        eslesen_odemeler.append(make_row("✅ Referans Eşleşmesi", best_candidate, 0.0))
-
-                            mid = row['Match_ID']
-                            if not match_found and mid and mid in onlar_dict_id:
-                                candidates = onlar_dict_id[mid]
-                                unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                pool = unused if unused else candidates
-                                best_candidate = None
-                                min_diff_abs = float('inf')
-                                filtered = [c for c in pool if c['Para_Birimi'] == row['Para_Birimi']]
-                                search_pool = filtered if filtered else pool
-                                for cand in search_pool:
-                                    diff = abs(cand[aranan_yon] - aranan_tutar)
-                                    if diff < min_diff_abs: min_diff_abs = diff; best_candidate = cand
-                                
-                                if best_candidate is not None:
-                                    match_found = True
-                                    matched_onlar_indices.add(best_candidate['unique_idx'])
-                                    real_fark_tl = aranan_tutar - best_candidate[aranan_yon]
-                                    real_fark_doviz = 0
-                                    durum = ""
-                                    is_tl_match = min_diff_abs < 0.1
-                                    is_doviz_match = True
-                                    is_try = row['Para_Birimi'] in ['TRY', 'TL']
-                                    if doviz_raporda:
-                                        real_fark_doviz = row['Doviz_Tutari'] - best_candidate['Doviz_Tutari']
-                                        if not is_try: is_doviz_match = abs(real_fark_doviz) < 0.1
-                                    
-                                    if is_tl_match and is_doviz_match: durum = "✅ Tam Eşleşme"
-                                    elif is_tl_match: durum = "⚠️ Kur Farkı"
-                                    else: durum = "❌ Tutar Farkı"
-                                    eslesenler.append(make_row(durum, best_candidate, real_fark_tl, real_fark_doviz))
-
-                            if not match_found:
-                                key = f"{round(aranan_tutar, 2)}_{row['Para_Birimi']}"
-                                if key in onlar_dict_tutar:
-                                    candidates = onlar_dict_tutar[key]
-                                    unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                    best_match = None
-                                    for cand in (unused if unused else candidates):
-                                        if pd.notna(row['Tarih_Odeme']) and pd.notna(cand['Tarih_Odeme']):
-                                            days_diff = abs((row['Tarih_Odeme'] - cand['Tarih_Odeme']).days)
-                                            if days_diff <= 3: best_match = cand; break
-                                    if best_match is not None:
-                                        matched_onlar_indices.add(best_match['unique_idx'])
-                                        eslesen_odemeler.append(make_row("✅ Ödeme/Tarih Eşleşmesi", best_match, 0.0, 0.0))
-                                        match_found = True
                         
                         if not match_found:
                             data_unmatched = {
@@ -546,7 +508,6 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
         except Exception as e:
             st.error(f"Hata: {e}")
 
-# --- SONUC GÖSTERME KISMI (GÜVENLİ) ---
 if st.session_state.get('analiz_yapildi', False):
     res = st.session_state.sonuclar
     
@@ -586,32 +547,23 @@ if st.session_state.get('analiz_yapildi', False):
     with c_down2:
         st.download_button("📥 Excel İndir (Tek Liste/Özet)", excel_indir_tek_sayfa(dfs_to_export), "Mutabakat_Tek_Liste.xlsx", type="primary")
 
-    tabs_list = ["📈 Özet", "✅ Faturalar", "⚠️ Hatalılar", "🔴 Bizde Var / Yok", "🔵 Onlarda Var / Yok"]
-    if not is_insurance: tabs_list.insert(2, "💰 Ödemeler")
+    tab_ozet, tab1, tab5, tab2, tab3, tab4 = st.tabs(["📈 Özet", "✅ Faturalar", "💰 Ödemeler", "⚠️ Hatalılar", "🔴 Bizde Var / Yok", "🔵 Onlarda Var / Yok"])
     
-    tabs = st.tabs(tabs_list)
-    
-    with tabs[0]:
+    with tab_ozet:
         st.dataframe(res["ozet"].style.format(precision=2), use_container_width=True)
-    with tabs[1]:
+    with tab1:
         if not df_eslesen_temiz.empty:
-            st.dataframe(df_eslesen_temiz.style.map(lambda v: 'color: green', subset=['Durum']), use_container_width=True)
+            st.dataframe(df_eslesen_temiz, use_container_width=True)
         else: st.info("Fatura eşleşmesi yok.")
-    
-    if not is_insurance:
-        with tabs[2]:
-            if not res["odeme"].empty:
-                st.dataframe(res["odeme"].style.map(lambda v: 'color: blue', subset=['Durum']), use_container_width=True)
-            else: st.info("Ödeme eşleşmesi yok.")
-        idx_offset = 1
-    else: idx_offset = 0
-        
-    with tabs[2+idx_offset]:
+    with tab5:
+        if not res["odeme"].empty:
+            st.dataframe(res["odeme"], use_container_width=True)
+        else: st.info("Ödeme eşleşmesi yok.")
+    with tab2:
         if not df_hatali.empty:
-            st.dataframe(df_hatali.style.map(lambda v: 'color: red', subset=['Durum']), use_container_width=True)
-        else: st.success("Hatalı kayıt yok.")
-    with tabs[3+idx_offset]:
+            st.dataframe(df_hatali, use_container_width=True)
+        else: st.success("Hata yok.")
+    with tab3:
         st.dataframe(res["un_biz"], use_container_width=True)
-    with tabs[4+idx_offset]:
+    with tab4:
         st.dataframe(res["un_onlar"], use_container_width=True)
-

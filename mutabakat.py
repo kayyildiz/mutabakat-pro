@@ -9,16 +9,12 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # --- 1. ARAYÜZ VE HAFIZA ---
-st.set_page_config(page_title="Mutabakat Pro", layout="wide")
+st.set_page_config(page_title="Mutabakat Pro V50", layout="wide")
 
-# --- SESSION STATE (HAFIZA) ---
 if 'analiz_yapildi' not in st.session_state:
     st.session_state['analiz_yapildi'] = False
 if 'sonuclar' not in st.session_state:
     st.session_state['sonuclar'] = {}
-# Akıllı Hafıza: Dosya adına göre kolon seçimlerini hatırlar
-if 'column_prefs' not in st.session_state:
-    st.session_state['column_prefs'] = {}
 
 hide_st_style = """
             <style>
@@ -32,20 +28,9 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- 2. YARDIMCI FONKSİYONLAR ---
+# --- 2. YARDIMCI FONKSİYONLAR (TAM KORUMALI) ---
 
-def get_smart_index(options, target_name, filename, setting_key):
-    """
-    Önce hafızadaki tercihe bakar, yoksa isme göre tahmin eder.
-    """
-    # 1. Hafıza Kontrolü
-    prefs = st.session_state['column_prefs'].get(filename, {})
-    saved_col = prefs.get(setting_key)
-    
-    if saved_col and saved_col in options:
-        return options.index(saved_col)
-    
-    # 2. Akıllı Tahmin (Hafıza yoksa)
+def get_default_idx(options, target_name):
     for i, opt in enumerate(options):
         if str(opt).strip().lower() == target_name.lower():
             return i
@@ -61,9 +46,12 @@ def get_default_multiselect(options, targets):
 
 @st.cache_data
 def belge_no_temizle(val):
+    # KORUMA: Seri/Liste gelirse ilkini al
     if isinstance(val, (pd.Series, list, tuple)):
         val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
+    
     if pd.isna(val): return ""
+    
     s = str(val)
     res = ''.join(filter(str.isdigit, s))
     if res: return str(int(res)) 
@@ -71,18 +59,25 @@ def belge_no_temizle(val):
 
 @st.cache_data
 def referans_no_temizle(val):
+    # KORUMA
     if isinstance(val, (pd.Series, list, tuple)):
         val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
+        
     if pd.isna(val): return ""
-    if isinstance(val, float): val = f"{val:.0f}"
+    
+    if isinstance(val, float):
+        val = f"{val:.0f}"
+
     s = str(val).strip().upper()
     s = re.sub(r'[^A-Z0-9]', '', s)
     s = s.lstrip('0')
     return s
 
 def safe_strftime(val):
+    # KORUMA
     if isinstance(val, (pd.Series, list, tuple)):
         val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
+
     if pd.isna(val): return ""
     try: return val.strftime('%d.%m.%Y')
     except: return ""
@@ -140,6 +135,7 @@ def ozet_rapor_olustur(df_biz_raw, df_onlar_raw):
     return ozet[cols]
 
 def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
+    # MÜKERRER KOLON TEMİZLİĞİ
     df = df.loc[:, ~df.columns.duplicated()]
     df_copy = df.copy()
     
@@ -185,7 +181,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
         df_new['Match_ID'] = df_new['Orijinal_Belge_No'].apply(lambda x: ''.join(filter(str.isdigit, str(x))))
         df_new['Match_ID'] = df_new['Match_ID'].replace(r'^0+', '', regex=True)
     
-    # Payment ID
     if not is_insurance_mode and config.get('odeme_ref_col') and config['odeme_ref_col'] != "Seçiniz...":
         df_new['Payment_ID'] = df_copy[config['odeme_ref_col']].apply(referans_no_temizle)
     else:
@@ -193,7 +188,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
 
     df_new['Kaynak'] = taraf_adi
     
-    # Döviz
     doviz_aktif = False
     if config.get('doviz_cinsi_col') and config['doviz_cinsi_col'] != "Seçiniz...":
         df_new['Para_Birimi'] = df_copy[config['doviz_cinsi_col']].astype(str).str.upper().str.strip()
@@ -283,6 +277,7 @@ def grupla(df, is_doviz_aktif):
         
         cols_needed = ['Match_ID', 'Para_Birimi', 'Doviz_Tutari']
         df_sub = df_ids[cols_needed].copy()
+        
         df_grp = df_ids.groupby('Match_ID', as_index=False).agg(agg_rules)
         df_grp = df_grp.set_index('Match_ID')
         df_grp['Doviz_Tutari'] = df_sub.groupby('Match_ID').apply(get_real_fx)
@@ -297,12 +292,14 @@ def grupla(df, is_doviz_aktif):
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])
-with c_title: st.title("💎 Mutabakat Pro") # Yeni İkon
+with c_title: st.title("🗂️ Mutabakat Pro V50")
 with c_settings:
     with st.expander("⚙️ Ayarlar", expanded=True):
-        mode_selection = st.radio("Mod:", ["C/H Ekstresi", "Sigorta Poliçesi"])
-        # Rol artık Dikey (horizontal=False sildik)
-        rol_secimi = st.radio("Rol:", ["Biz Alıcıyız", "Biz Satıcıyız"])
+        c_set1, c_set2 = st.columns(2)
+        with c_set1:
+            mode_selection = st.radio("Mod:", ["C/H Ekstresi", "Sigorta Poliçesi"])
+        with c_set2:
+            rol_secimi = st.radio("Rol:", ["Biz Alıcıyız", "Biz Satıcıyız"])
 
 rol_kodu = "Biz Alıcıyız" if "Alıcıyız" in rol_secimi else "Biz Satıcıyız"
 is_ins = (mode_selection == "Sigorta Poliçesi")
@@ -321,57 +318,40 @@ with col1:
         d1 = d1.loc[:, ~d1.columns.duplicated()]
         cl1 = ["Seçiniz..."] + d1.columns.tolist()
         
-        # AKILLI HAFIZA: Kayıtlı ismi bul
-        f_name = f1.name
-        
-        # Auto-Fill Logic (Hafızadan veya Tahminden)
-        def get_idx(key_suffix, default_guess):
-            # Önce hafızaya bak
-            if f_name in st.session_state['column_prefs']:
-                saved = st.session_state['column_prefs'][f_name].get(key_suffix)
-                if saved in cl1: return cl1.index(saved)
-            # Yoksa tahmin et
-            return get_default_idx(cl1, default_guess)
+        def_tarih = get_default_idx(cl1, "Belge tarihi") if is_ins else 0
+        def_belge = get_default_idx(cl1, "Referans") if is_ins else 0
+        def_tutar = get_default_idx(cl1, "Belge PB cinsinden tutar") if is_ins else 0
+        def_pb = get_default_idx(cl1, "Belge para birimi") if is_ins else 0
 
-        def_tarih = get_idx('tarih_col', "Belge tarihi" if is_ins else "Tarih")
-        def_belge = get_idx('belge_col', "Referans" if is_ins else "Belge No")
-        def_tutar = get_idx('tutar_col', "Belge PB cinsinden tutar" if is_ins else "Tutar")
-        
         cf1['tarih_col'] = st.selectbox("Tarih", cl1, index=def_tarih, key="d1")
         cf1['belge_col'] = st.selectbox("Belge No / Poliçe No", cl1, index=def_belge, key="doc1")
         
         if not is_ins:
             st.info("📅 Ödeme")
-            def_pod = get_idx('tarih_odeme_col', "Ödeme Tarihi")
-            def_ref = get_idx('odeme_ref_col', "Referans")
-            cf1['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi", cl1, index=def_pod, key="pd1")
-            cf1['odeme_ref_col'] = st.selectbox("Ödeme Ref", cl1, index=def_ref, key="pref1")
+            cf1['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi", cl1, key="pd1")
+            cf1['odeme_ref_col'] = st.selectbox("Ödeme Ref", cl1, key="pref1")
         else:
             st.info("💳 Ödeme Filtresi")
-            def_tur = get_idx('odeme_turu_sutunu', "Belge Türü Tanımı")
-            fcol1 = st.selectbox("İşlem Türü:", cl1, index=def_tur, key="ftur1")
+            def_tur_col = get_default_idx(cl1, "Belge Türü Tanımı")
+            fcol1 = st.selectbox("İşlem Türü:", cl1, index=def_tur_col, key="ftur1")
             if fcol1 and fcol1!="Seçiniz...":
                 uv1 = d1[fcol1].astype(str).unique().tolist()
-                dv1 = get_default_multiselect(uv1, ["Satıcı ödemesi", "HAVALE", "KREDI KARTI"])
+                dv1 = get_default_multiselect(uv1, ["Satıcı ödemesi", "HAVALE", "KREDI KARTI", "EFT"])
                 fv1 = st.multiselect("Ödeme Olanlar:", uv1, default=dv1, key="fvals1")
                 cf1['odeme_turu_sutunu'] = fcol1
                 cf1['odeme_turu_degerleri'] = fv1
         
         st.success("💰 Tutar")
-        ty1 = st.radio("Tip", ["Ayrı", "Tek"], index=(1 if is_ins else 0), key="r1", horizontal=True)
+        def_tip_idx = 1 if is_ins else 0
+        ty1 = st.radio("Tip", ["Ayrı", "Tek"], index=def_tip_idx, key="r1", horizontal=True)
         cf1['tutar_tipi'] = "Tek Kolon" if ty1=="Tek" else "Ayrı Kolonlar"
         if ty1=="Tek": cf1['tutar_col'] = st.selectbox("Tutar", cl1, index=def_tutar, key="amt1")
         else:
-            def_b = get_idx('borc_col', "Borç")
-            def_a = get_idx('alacak_col', "Alacak")
-            cf1['borc_col'] = st.selectbox("Borç", cl1, index=def_b, key="b1")
-            cf1['alacak_col'] = st.selectbox("Alacak", cl1, index=def_a, key="a1")
-        
+            cf1['borc_col'] = st.selectbox("Borç", cl1, key="b1")
+            cf1['alacak_col'] = st.selectbox("Alacak", cl1, key="a1")
         c3, c4 = st.columns(2)
-        def_pb = get_idx('doviz_cinsi_col', "PB")
-        def_dt = get_idx('doviz_tutar_col', "Döviz Tutar")
         cf1['doviz_cinsi_col'] = c3.selectbox("PB", cl1, index=def_pb, key="cur1")
-        cf1['doviz_tutar_col'] = c4.selectbox("Döviz Tutar", cl1, index=def_dt, key="cur_amt1")
+        cf1['doviz_tutar_col'] = c4.selectbox("Döviz Tutar", cl1, index=def_tutar, key="cur_amt1")
         ex_biz = st.multiselect("Rapora Eklenecek Sütunlar (Biz):", options=d1.columns.tolist(), key="multi1")
 
 # SAĞ
@@ -386,29 +366,23 @@ with col2:
         d2 = d2.loc[:, ~d2.columns.duplicated()]
         cl2 = ["Seçiniz..."] + d2.columns.tolist()
         
-        f_name2 = "merged_files" if len(f2) > 1 else f2[0].name
-        
-        def get_idx2(key_suffix, default_guess):
-            if f_name2 in st.session_state['column_prefs']:
-                saved = st.session_state['column_prefs'][f_name2].get(key_suffix)
-                if saved in cl2: return cl2.index(saved)
-            return get_default_idx(cl2, default_guess)
-        
-        def_tarih2 = get_idx2('tarih_col', "İşlem Tarihi")
+        def_tarih2 = get_default_idx(cl2, "İşlem Tarihi") if is_ins else 0
+        def_pol = get_default_idx(cl2, "Poliçe No") if is_ins else 0
+        def_zey = get_default_idx(cl2, "Zeyl No") if is_ins else 0
+        def_tutar2 = get_default_idx(cl2, "Tutar_Döviz") if is_ins else 0
+        def_pb2 = get_default_idx(cl2, "Para Cinsi") if is_ins else 0
+
         cf2['tarih_col'] = st.selectbox("Tarih", cl2, index=def_tarih2, key="d2")
         
         if is_ins:
             c_p, c_z = st.columns(2)
-            def_pol = get_idx2('police_col', "Poliçe No")
-            def_zey = get_idx2('zeyil_col', "Zeyl No")
             cf2['police_col'] = c_p.selectbox("Poliçe No", cl2, index=def_pol, key="pol2")
             cf2['zeyil_col'] = c_z.selectbox("Zeyil No", cl2, index=def_zey, key="zey2")
             cf2['belge_col'] = ""
             
             st.markdown("---")
             st.info("💳 Ödeme Filtresi")
-            def_ftur = get_idx2('odeme_turu_sutunu', "İşlem Türü")
-            fcol = st.selectbox("İşlem Türü Sütunu:", cl2, index=def_ftur, key="ftur")
+            fcol = st.selectbox("İşlem Türü Sütunu:", cl2, key="ftur")
             if fcol and fcol != "Seçiniz...":
                 uv = d2[fcol].astype(str).unique().tolist()
                 dv = get_default_multiselect(uv, ["HAVALE", "KREDI KARTI"])
@@ -416,55 +390,27 @@ with col2:
                 cf2['odeme_turu_sutunu'] = fcol
                 cf2['odeme_turu_degerleri'] = fv
         else:
-            def_doc2 = get_idx2('belge_col', "Fatura No")
-            cf2['belge_col'] = st.selectbox("Fatura/Belge No", cl2, index=def_doc2, key="doc2")
+            cf2['belge_col'] = st.selectbox("Fatura/Belge No", cl2, key="doc2")
             st.info("📅 Ödeme")
-            def_pod2 = get_idx2('tarih_odeme_col', "Ödeme Tarihi")
-            def_ref2 = get_idx2('odeme_ref_col', "Referans")
-            cf2['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi", cl2, index=def_pod2, key="pd2")
-            cf2['odeme_ref_col'] = st.selectbox("Ödeme Ref", cl2, index=def_ref2, key="pref2")
+            cf2['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi", cl2, key="pd2")
+            cf2['odeme_ref_col'] = st.selectbox("Ödeme Ref", cl2, key="pref2")
 
         st.success("💰 Tutar")
         ty2 = st.radio("Tip", ["Ayrı", "Tek"], index=(1 if is_ins else 0), key="r2", horizontal=True)
         cf2['tutar_tipi'] = "Tek Kolon" if ty2=="Tek" else "Ayrı Kolonlar"
-        if ty2=="Tek": 
-            def_amt2 = get_idx2('tutar_col', "Tutar_Döviz")
-            cf2['tutar_col'] = st.selectbox("Tutar", cl2, index=def_amt2, key="amt2")
+        if ty2=="Tek": cf2['tutar_col'] = st.selectbox("Tutar", cl2, index=def_tutar2, key="amt2")
         else:
-            def_b2 = get_idx2('borc_col', "Borç")
-            def_a2 = get_idx2('alacak_col', "Alacak")
-            cf2['borc_col'] = st.selectbox("Borç", cl2, index=def_b2, key="b2")
-            cf2['alacak_col'] = st.selectbox("Alacak", cl2, index=def_a2, key="a2")
-            
+            cf2['borc_col'] = st.selectbox("Borç", cl2, key="b2")
+            cf2['alacak_col'] = st.selectbox("Alacak", cl2, key="a2")
         c3, c4 = st.columns(2)
-        def_pb2 = get_idx2('doviz_cinsi_col', "Para Cinsi")
-        def_dt2 = get_idx2('doviz_tutar_col', "Tutar_Döviz")
         cf2['doviz_cinsi_col'] = c3.selectbox("PB", cl2, index=def_pb2, key="cur2")
-        cf2['doviz_tutar_col'] = c4.selectbox("Döviz Tutar", cl2, index=def_dt2, key="cur_amt2")
+        cf2['doviz_tutar_col'] = c4.selectbox("Döviz Tutar", cl2, index=def_tutar2, key="cur_amt2")
         ex_onlar = st.multiselect("Rapora Eklenecek Sütunlar (Karşı):", options=d2.columns.tolist(), key="multi2")
 
 st.divider()
 
 if st.button("🚀 Başlat", type="primary", use_container_width=True):
     if f1 and f2:
-        # SEÇİMLERİ HAFIZAYA KAYDET (AKILLI HAFIZA)
-        # Sol
-        if f1.name:
-            prefs = {}
-            for k, v in cf1.items():
-                if k in ['tarih_col', 'belge_col', 'tutar_col', 'borc_col', 'alacak_col', 'doviz_cinsi_col', 'doviz_tutar_col', 'tarih_odeme_col', 'odeme_ref_col', 'odeme_turu_sutunu']:
-                    if v and v != "Seçiniz...": prefs[k] = v
-            st.session_state['column_prefs'][f1.name] = prefs
-            
-        # Sağ
-        f_name_right = "merged_files" if len(f2) > 1 else f2[0].name
-        if f_name_right:
-            prefs = {}
-            for k, v in cf2.items():
-                if k in ['tarih_col', 'belge_col', 'police_col', 'zeyil_col', 'tutar_col', 'borc_col', 'alacak_col', 'doviz_cinsi_col', 'doviz_tutar_col', 'tarih_odeme_col', 'odeme_ref_col', 'odeme_turu_sutunu']:
-                    if v and v != "Seçiniz...": prefs[k] = v
-            st.session_state['column_prefs'][f_name_right] = prefs
-
         try:
             start = time.time()
             with st.spinner('İşleniyor...'):
@@ -520,7 +466,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         return d
 
                     if is_ins:
-                        # SIGORTA MODU
                         key = f"{round(my_amt, 2)}_{row['Para_Birimi']}"
                         if key in dict_onlar_tutar:
                             cands = dict_onlar_tutar[key]
@@ -530,7 +475,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                     if pd.notna(row['Tarih']) and row['Tarih'] == c['Tarih']:
                                         best = c; break
                                     if best is None: best = c
-                            if best:
+                            if best is not None:
                                 matched_ids.add(best['unique_idx'])
                                 eslesenler.append(make_row("✅ Tam Eşleşme", best, 0.0))
                                 found = True
@@ -555,7 +500,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                     eslesenler.append(make_row(status, best, diff_real, real_dv))
                                     found = True
                     else:
-                        # C/H MODU
                         if not found and row['Match_ID']:
                             if row['Match_ID'] in dict_onlar_id:
                                 cands = dict_onlar_id[row['Match_ID']]
@@ -593,7 +537,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         for c in ex_onlar: d_un[f"KARŞI: {c}"] = str(row.get(c, ""))
                         un_onlar.append(d_un)
 
-                # ÖDEME EŞLEŞTİRME
                 if not pay_biz.empty and not pay_onlar.empty:
                     dict_pay = {}
                     used_pay = set()
@@ -636,24 +579,10 @@ if st.session_state.get('analiz_yapildi', False):
     res = st.session_state['sonuclar']
     
     df_es = res.get("eslesen", pd.DataFrame())
-    # C/H Modunda hatalıları ayır
     if not df_es.empty:
-        # Eğer Sigorta Modu değilse 1 TL kuralını uygula
-        if not is_ins:
-            # Fark (TL) kolonu varsa
-            if 'Fark (TL)' in df_es.columns:
-                df_ok = df_es[abs(df_es['Fark (TL)']) <= 1.0]
-                df_err = df_es[abs(df_es['Fark (TL)']) > 1.0]
-            else:
-                df_ok = df_es
-                df_err = pd.DataFrame()
-        else:
-            # Sigorta Modunda (Mutlak Eşleşme olduğu için) hatalıları yine de gösterebiliriz veya ayırabiliriz
-            df_ok = df_es[~df_es['Durum'].str.contains('❌|⚠️', na=False)]
-            df_err = df_es[df_es['Durum'].str.contains('❌|⚠️', na=False)]
+        df_ok = df_es[~df_es['Durum'].str.contains('❌|⚠️', na=False)]
     else:
         df_ok = pd.DataFrame()
-        df_err = pd.DataFrame()
 
     dfs_exp = {
         "ÖZET_BAKIYE": res.get("ozet", pd.DataFrame()),
@@ -661,45 +590,20 @@ if st.session_state.get('analiz_yapildi', False):
         "Bizde Var - Yok": res.get("un_biz", pd.DataFrame()),
         "Onlarda Var - Yok": res.get("un_onlar", pd.DataFrame())
     }
-    
     if not is_ins: 
         dfs_exp["Eşleşen Ödemeler"] = res.get("odeme", pd.DataFrame())
-        # C/H modunda hatalıları ekle
-        dfs_exp["Hatalı Farklar"] = df_err
-    
+    else:
+        dfs_exp["Eşleşen Ödemeler"] = res.get("odeme", pd.DataFrame())
+
     c1, c2 = st.columns(2)
     with c1: st.download_button("📥 İndir (Ayrı Sayfalar)", excel_indir_coklu(dfs_exp), "Rapor.xlsx")
     with c2: st.download_button("📥 İndir (Tek Liste)", excel_indir_tek_sayfa(dfs_exp), "Ozet.xlsx")
     
-    t_list = ["📈 Özet", "✅ Eşleşenler"]
-    if not is_ins: 
-        t_list.append("⚠️ Hatalı Farklar (>1TL)")
-        t_list.append("💰 Ödemeler")
-        
-    t_list.extend(["🔴 Bizde Var", "🔵 Onlarda Var"])
+    t_heads = ["📈 Özet", "✅ Poliçeler", "💰 Ödemeler", "🔴 Bizde Var", "🔵 Onlarda Var"]
+    tabs = st.tabs(t_heads)
     
-    tabs = st.tabs(t_list)
-    
-    # ÖZET (BOLD YAPILDI)
-    with tabs[0]: 
-        df_o = res.get("ozet", pd.DataFrame())
-        # Pandas Styler ile Bold yap
-        def highlight_cols(x):
-            return ['font-weight: bold' if col in ['Biz_Bakiye', 'Onlar_Bakiye', 'Kümüle_Fark'] else '' for col in x.index]
-        try:
-            st.dataframe(df_o.style.apply(highlight_cols, axis=1).format(precision=2), use_container_width=True)
-        except:
-            st.dataframe(df_o, use_container_width=True)
-            
+    with tabs[0]: st.dataframe(res.get("ozet", pd.DataFrame()).style.format(precision=2), use_container_width=True)
     with tabs[1]: st.dataframe(df_ok, use_container_width=True)
-    
-    idx = 2
-    if not is_ins:
-        with tabs[idx]: st.dataframe(df_err, use_container_width=True)
-        idx += 1
-        with tabs[idx]: st.dataframe(res.get("odeme", pd.DataFrame()), use_container_width=True)
-        idx += 1
-        
-    with tabs[idx]: st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
-    with tabs[idx+1]: st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
-
+    with tabs[2]: st.dataframe(res.get("odeme", pd.DataFrame()), use_container_width=True)
+    with tabs[3]: st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
+    with tabs[4]: st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)

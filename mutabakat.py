@@ -590,7 +590,7 @@ if st.session_state.get('analiz_yapildi', False):
     with c1: st.download_button("📥 İndir (Ayrı Sayfalar)", excel_indir_coklu(dfs_exp), "Rapor.xlsx")
     with c2: st.download_button("📥 İndir (Tek Liste)", excel_indir_tek_sayfa(dfs_exp), "Ozet.xlsx")
     
-    t_heads = ["📈 Özet", "✅ Poliçeler", "💰 Ödemeler", "🔴 Bizde Var", "🔵 Onlarda Var"]
+    t_heads = ["📈 Özet", "✅ Belgeler", "💰 Ödemeler", "🔴 Bizde Var", "🔵 Onlarda Var"]
     tabs = st.tabs(t_heads)
     
     with tabs[0]: st.dataframe(res.get("ozet", pd.DataFrame()).style.format(precision=2), use_container_width=True)
@@ -598,3 +598,4 @@ if st.session_state.get('analiz_yapildi', False):
     with tabs[2]: st.dataframe(res.get("odeme", pd.DataFrame()), use_container_width=True)
     with tabs[3]: st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]: st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+

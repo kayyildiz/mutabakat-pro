@@ -4,10 +4,9 @@ import re
 import io
 import time
 
-# --- 1. ARAYÜZ VE HAFIZA AYARLARI (EN BAŞTA OLACAK) ---
+# --- ARAYÜZ VE STATE ---
 st.set_page_config(page_title="Mutabakat Pro", layout="wide")
 
-# Session State Başlatma (Hata almamak için en kritik yer)
 if 'analiz_yapildi' not in st.session_state:
     st.session_state['analiz_yapildi'] = False
 if 'sonuclar' not in st.session_state:
@@ -25,8 +24,7 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- YARDIMCI FONKSİYONLAR ---
-
+# --- FONKSİYONLAR ---
 @st.cache_data
 def belge_no_temizle(val):
     if pd.isna(val): return ""
@@ -74,24 +72,27 @@ def excel_indir_tek_sayfa(dfs_dict):
         master_df.to_excel(writer, index=False, sheet_name='Tum_Mutabakat_Verisi')
     return output.getvalue()
 
-def ozet_rapor_olustur(df_biz, df_onlar):
-    biz_monthly = df_biz.copy()
-    biz_monthly['Yil_Ay'] = biz_monthly['Tarih'].dt.to_period('M')
-    biz_monthly['Net_Hareket'] = biz_monthly['Borc'] - biz_monthly['Alacak']
-    
-    grp_biz = biz_monthly.groupby(['Para_Birimi', 'Yil_Ay'])[['Borc', 'Alacak', 'Net_Hareket']].sum().reset_index()
-    grp_biz = grp_biz.rename(columns={'Borc': 'Biz_Borc', 'Alacak': 'Biz_Alacak', 'Net_Hareket': 'Biz_Net'})
-    
-    onlar_monthly = df_onlar.copy()
-    onlar_monthly['Yil_Ay'] = onlar_monthly['Tarih'].dt.to_period('M')
-    onlar_monthly['Net_Hareket'] = onlar_monthly['Borc'] - onlar_monthly['Alacak']
-    
-    grp_onlar = onlar_monthly.groupby(['Para_Birimi', 'Yil_Ay'])[['Borc', 'Alacak', 'Net_Hareket']].sum().reset_index()
-    grp_onlar = grp_onlar.rename(columns={'Borc': 'Onlar_Borc', 'Alacak': 'Onlar_Alacak', 'Net_Hareket': 'Onlar_Net'})
-    
+def ozet_rapor_olustur(df_biz_raw, df_onlar_raw):
+    """Özet raporu HAM veri üzerinden oluştur (Kayıp yaşamamak için)."""
+    # Bizim
+    biz = df_biz_raw.copy()
+    biz['Yil_Ay'] = biz['Tarih'].dt.to_period('M')
+    biz['Net'] = biz['Borc'] - biz['Alacak']
+    grp_biz = biz.groupby(['Para_Birimi', 'Yil_Ay'])[['Borc', 'Alacak', 'Net']].sum().reset_index()
+    grp_biz.columns = ['Para_Birimi', 'Yil_Ay', 'Biz_Borc', 'Biz_Alacak', 'Biz_Net']
+
+    # Onlar
+    onlar = df_onlar_raw.copy()
+    onlar['Yil_Ay'] = onlar['Tarih'].dt.to_period('M')
+    onlar['Net'] = onlar['Borc'] - onlar['Alacak']
+    grp_onlar = onlar.groupby(['Para_Birimi', 'Yil_Ay'])[['Borc', 'Alacak', 'Net']].sum().reset_index()
+    grp_onlar.columns = ['Para_Birimi', 'Yil_Ay', 'Onlar_Borc', 'Onlar_Alacak', 'Onlar_Net']
+
+    # Birleştir
     ozet = pd.merge(grp_biz, grp_onlar, on=['Para_Birimi', 'Yil_Ay'], how='outer').fillna(0)
     ozet = ozet.sort_values(['Para_Birimi', 'Yil_Ay'])
     
+    # Kümülatif
     ozet['Biz_Bakiye'] = ozet.groupby('Para_Birimi')['Biz_Net'].cumsum()
     ozet['Onlar_Bakiye'] = ozet.groupby('Para_Birimi')['Onlar_Net'].cumsum()
     ozet['Kümüle_Fark'] = ozet['Biz_Bakiye'] + ozet['Onlar_Bakiye']
@@ -101,46 +102,53 @@ def ozet_rapor_olustur(df_biz, df_onlar):
             'Onlar_Borc', 'Onlar_Alacak', 'Onlar_Bakiye', 'Kümüle_Fark']
     return ozet[cols]
 
-def veri_hazirla_ve_grupla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
+def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
+    """Veriyi temizler, standartlaştırır ve ödemeleri ayırır."""
     df_copy = df.copy()
     
-    # FİLTRELEME
-    if is_insurance_mode and 'filtre_sutunu' in config and 'filtre_degerleri' in config:
-        col_filter = config['filtre_sutunu']
-        vals_exclude = config['filtre_degerleri']
-        if col_filter and vals_exclude:
-            df_copy = df_copy[~df_copy[col_filter].isin(vals_exclude)]
-
-    df_new = pd.DataFrame() 
+    # --- ÖDEME AYRIŞTIRMA ---
+    df_payments = pd.DataFrame()
+    
+    # Eğer ödeme filtresi/türü seçildiyse, ödemeleri ana listeden AYIR
+    filter_col = config.get('odeme_turu_sutunu')
+    filter_vals = config.get('odeme_turu_degerleri')
+    
+    if filter_col and filter_vals and filter_col in df_copy.columns:
+        mask_payment = df_copy[filter_col].isin(filter_vals)
+        df_payments = df_copy[mask_payment].copy()
+        df_copy = df_copy[~mask_payment] # Ödemeleri ana listeden çıkar
+    
+    # --- STANDARTLAŞTIRMA ---
+    df_new = pd.DataFrame()
     for col in extra_cols:
-        if col in df_copy.columns:
-            df_new[col] = df_copy[col].astype(str)
+        if col in df_copy.columns: df_new[col] = df_copy[col].astype(str)
 
     df_new['Tarih'] = pd.to_datetime(df_copy[config['tarih_col']], dayfirst=True, errors='coerce')
     
+    # Tarih Ödeme (Varsa)
     if not is_insurance_mode and config.get('tarih_odeme_col') and config['tarih_odeme_col'] != "Seçiniz...":
         df_new['Tarih_Odeme'] = pd.to_datetime(df_copy[config['tarih_odeme_col']], dayfirst=True, errors='coerce')
     else:
         df_new['Tarih_Odeme'] = df_new['Tarih']
 
+    # Match ID
     if is_insurance_mode and taraf_adi == "Onlar":
-        pol = df_copy[config['police_col']].fillna('').astype(str)
-        zey = df_copy[config['zeyil_col']].fillna('').astype(str)
-        df_new['Orijinal_Belge_No'] = pol + " - " + zey
-        
+        # Poliçe + Zeyil
         def clean_join(p, z):
-            p_clean = ''.join(filter(str.isdigit, str(p)))
-            z_clean = ''.join(filter(str.isdigit, str(z)))
-            if p_clean: 
-                combined = p_clean + z_clean
+            p_c = ''.join(filter(str.isdigit, str(p)))
+            z_c = ''.join(filter(str.isdigit, str(z)))
+            if p_c: 
+                combined = p_c + z_c
                 return str(int(combined)) if combined else ""
             return ""
-        df_new['Match_ID'] = df_copy.apply(lambda x: clean_join(x[config['police_col']], x[config['zeyil_col']]), axis=1)
+        df_new['Match_ID'] = df_copy.apply(lambda x: clean_join(x.get(config.get('police_col')), x.get(config.get('zeyil_col'))), axis=1)
+        df_new['Orijinal_Belge_No'] = df_copy[config.get('police_col')].fillna('').astype(str) + "/" + df_copy[config.get('zeyil_col')].fillna('').astype(str)
     else:
         df_new['Orijinal_Belge_No'] = df_copy[config['belge_col']].astype(str)
         df_new['Match_ID'] = df_new['Orijinal_Belge_No'].apply(lambda x: ''.join(filter(str.isdigit, str(x))))
         df_new['Match_ID'] = df_new['Match_ID'].replace(r'^0+', '', regex=True)
-    
+
+    # Payment ID (C/H Modu)
     if not is_insurance_mode and config.get('odeme_ref_col') and config['odeme_ref_col'] != "Seçiniz...":
         df_new['Payment_ID'] = df_copy[config['odeme_ref_col']].apply(referans_no_temizle)
     else:
@@ -148,6 +156,7 @@ def veri_hazirla_ve_grupla(df, config, taraf_adi, is_insurance_mode=False, extra
 
     df_new['Kaynak'] = taraf_adi
     
+    # Döviz
     doviz_aktif = False
     if config.get('doviz_cinsi_col') and config['doviz_cinsi_col'] != "Seçiniz...":
         df_new['Para_Birimi'] = df_copy[config['doviz_cinsi_col']].astype(str).str.upper().str.strip()
@@ -162,401 +171,370 @@ def veri_hazirla_ve_grupla(df, config, taraf_adi, is_insurance_mode=False, extra
     else:
         df_new['Doviz_Tutari'] = 0.0
 
+    # Tutar
     if "Tek Kolon" in config['tutar_tipi']:
         col_name = config['tutar_col']
-        ham_tutar = pd.to_numeric(df_copy[col_name], errors='coerce').fillna(0)
-        if not doviz_aktif: df_new['Doviz_Tutari'] = 0.0
+        ham = pd.to_numeric(df_copy[col_name], errors='coerce').fillna(0)
         
-        rol = config.get('rol_kodu', 'Biz Alıcıyız') 
+        rol = config.get('rol_kodu', 'Biz Alıcıyız')
         if rol == "Biz Alıcıyız":
-            df_new['Borc'] = ham_tutar.where(ham_tutar > 0, 0)
-            df_new['Alacak'] = ham_tutar.where(ham_tutar < 0, 0).abs()
+            df_new['Borc'] = ham.where(ham > 0, 0)
+            df_new['Alacak'] = ham.where(ham < 0, 0).abs()
         else:
-            df_new['Alacak'] = ham_tutar.where(ham_tutar > 0, 0)
-            df_new['Borc'] = ham_tutar.where(ham_tutar < 0, 0).abs()
-    else: 
+            df_new['Alacak'] = ham.where(ham > 0, 0)
+            df_new['Borc'] = ham.where(ham < 0, 0).abs()
+    else:
         df_new['Borc'] = pd.to_numeric(df_copy[config['borc_col']], errors='coerce').fillna(0)
         df_new['Alacak'] = pd.to_numeric(df_copy[config['alacak_col']], errors='coerce').fillna(0)
+
+    # Ödemeler İçin de Aynı Yapıyı Kur
+    df_pay_final = pd.DataFrame()
+    if not df_payments.empty:
+        df_pay_final = df_new.iloc[0:0].copy() # Boş şablon
+        # Tarih
+        df_pay_final['Tarih'] = pd.to_datetime(df_payments[config['tarih_col']], dayfirst=True, errors='coerce')
+        # Tutar
+        if "Tek Kolon" in config['tutar_tipi']:
+            col_name = config['tutar_col']
+            ham = pd.to_numeric(df_payments[col_name], errors='coerce').fillna(0)
+            if rol == "Biz Alıcıyız":
+                df_pay_final['Borc'] = ham.where(ham > 0, 0)
+                df_pay_final['Alacak'] = ham.where(ham < 0, 0).abs()
+            else:
+                df_pay_final['Alacak'] = ham.where(ham > 0, 0)
+                df_pay_final['Borc'] = ham.where(ham < 0, 0).abs()
+        else:
+            df_pay_final['Borc'] = pd.to_numeric(df_payments[config['borc_col']], errors='coerce').fillna(0)
+            df_pay_final['Alacak'] = pd.to_numeric(df_payments[config['alacak_col']], errors='coerce').fillna(0)
+        
+        # Döviz
+        if doviz_aktif:
+            df_pay_final['Para_Birimi'] = df_payments[config['doviz_cinsi_col']].astype(str).str.upper().str.strip()
+            df_pay_final['Para_Birimi'] = df_pay_final['Para_Birimi'].replace({'TL': 'TRY'})
+            df_pay_final['Doviz_Tutari'] = pd.to_numeric(df_payments[config['doviz_tutar_col']], errors='coerce').fillna(0).abs()
+        else:
+            df_pay_final['Para_Birimi'] = "TRY"
+            df_pay_final['Doviz_Tutari'] = 0.0
+            
+        # Ekstra
+        for col in extra_cols:
+            if col in df_payments.columns: df_pay_final[col] = df_payments[col].astype(str)
+            
+        df_pay_final['Match_ID'] = ""
+        df_pay_final['Kaynak'] = taraf_adi
+        df_pay_final['unique_idx'] = df_pay_final.index # Geçici index
+
+    return df_new, df_pay_final, doviz_aktif
+
+def grupla(df, is_doviz_aktif):
+    """Verilen DF'yi Match_ID'ye göre gruplar."""
+    if df.empty: return df
     
-    mask_ids = df_new['Match_ID'] != ""
-    df_invoices = df_new[mask_ids]
-    df_others = df_new[~mask_ids]
+    mask_ids = df['Match_ID'] != ""
+    df_ids = df[mask_ids]
+    df_noids = df[~mask_ids]
     
-    mask_pay_ids = (df_others['Payment_ID'] != "") & (df_others['Payment_ID'].notna())
-    df_payments = df_others[mask_pay_ids]
-    df_rest = df_others[~mask_pay_ids]
+    if df_ids.empty: return df_noids
     
-    final_dfs = []
+    # Kurallar
     agg_rules = {
         'Tarih': 'first', 'Tarih_Odeme': 'first', 'Orijinal_Belge_No': 'first', 
-        'Kaynak': 'first', 'Borc': 'sum', 'Alacak': 'sum', 'Para_Birimi': 'first'
+        'Payment_ID': 'first', 'Kaynak': 'first', 'Borc': 'sum', 'Alacak': 'sum', 
+        'Para_Birimi': 'first'
     }
-    for col in extra_cols:
-        if col in df_new.columns:
+    # Ekstra kolonlar (varsa)
+    for col in df.columns:
+        if col not in agg_rules and col not in ['Match_ID', 'unique_idx', 'Doviz_Tutari']:
             agg_rules[col] = 'first'
+            
+    # Döviz Mantığı (Sigortada Max, Diğerinde First)
+    if is_doviz_aktif:
+        def get_real_fx(sub):
+            nt = sub[~sub['Para_Birimi'].isin(['TRY', 'TL'])]
+            if not nt.empty: return nt['Doviz_Tutari'].max()
+            return 0.0
+        def get_real_code(sub):
+            nt = sub[~sub['Para_Birimi'].isin(['TRY', 'TL'])]
+            if not nt.empty: return nt['Para_Birimi'].iloc[0]
+            return sub['Para_Birimi'].iloc[0]
     
-    if doviz_aktif:
-        def get_real_fx_amount(sub_df):
-            non_try = sub_df[~sub_df['Para_Birimi'].isin(['TRY', 'TL', 'TRL'])]
-            if not non_try.empty: return non_try['Doviz_Tutari'].max()
-            else: return 0.0
-        def get_real_fx_code(sub_df):
-            non_try = sub_df[~sub_df['Para_Birimi'].isin(['TRY', 'TL', 'TRL'])]
-            if not non_try.empty: return non_try['Para_Birimi'].iloc[0]
-            return sub_df['Para_Birimi'].iloc[0]
-
-    if not df_invoices.empty:
-        df_grp_inv = df_invoices.groupby('Match_ID', as_index=False).agg(agg_rules)
-        if not is_insurance_mode:
-            df_grp_inv['Payment_ID'] = df_invoices.groupby('Match_ID')['Payment_ID'].first().values
-        else:
-            df_grp_inv['Payment_ID'] = ""
-
-        if doviz_aktif:
-            df_grp_inv = df_grp_inv.set_index('Match_ID')
-            df_grp_inv['Doviz_Tutari'] = df_invoices.groupby('Match_ID').apply(get_real_fx_amount)
-            df_grp_inv['Para_Birimi'] = df_invoices.groupby('Match_ID').apply(get_real_fx_code)
-            df_grp_inv = df_grp_inv.reset_index()
-        else:
-            df_grp_inv['Doviz_Tutari'] = 0.0
-        final_dfs.append(df_grp_inv)
-
-    if not df_payments.empty:
-        df_grp_pay = df_payments.groupby('Payment_ID', as_index=False).agg(agg_rules)
-        df_grp_pay['Match_ID'] = "" 
-        if doviz_aktif:
-            df_grp_pay = df_grp_pay.set_index('Payment_ID')
-            df_grp_pay['Doviz_Tutari'] = df_payments.groupby('Payment_ID').apply(get_real_fx_amount)
-            df_grp_pay['Para_Birimi'] = df_payments.groupby('Payment_ID').apply(get_real_fx_code)
-            df_grp_pay = df_grp_pay.reset_index()
-        else:
-            df_grp_pay['Doviz_Tutari'] = 0.0
-        final_dfs.append(df_grp_pay)
-
-    if not df_rest.empty:
-        final_dfs.append(df_rest)
-
-    if final_dfs:
-        df_final = pd.concat(final_dfs, ignore_index=True)
+    df_grp = df_ids.groupby('Match_ID', as_index=False).agg(agg_rules)
+    
+    if is_doviz_aktif:
+        df_grp = df_grp.set_index('Match_ID')
+        df_grp['Doviz_Tutari'] = df_ids.groupby('Match_ID').apply(get_real_fx)
+        df_grp['Para_Birimi'] = df_ids.groupby('Match_ID').apply(get_real_code)
+        df_grp = df_grp.reset_index()
     else:
-        df_final = df_new
+        df_grp['Doviz_Tutari'] = 0.0
         
-    df_final['unique_idx'] = df_final.index
-    return df_final, doviz_aktif, df
+    final = pd.concat([df_grp, df_noids], ignore_index=True)
+    final['unique_idx'] = final.index
+    return final
 
-# --- ARAYÜZ BAŞLIYOR ---
+# --- ARAYÜZ ---
+st.title("🗂️ Mutabakat Pro")
 
-# HEADER & AYARLAR (SAĞ ÜSTTE)
-col_title, col_settings = st.columns([3, 2])
-with col_title:
-    st.title("🗂️ Mutabakat Pro")
-with col_settings:
-    # AYARLAR BURADA
-    with st.expander("⚙️ Çalışma Ayarları", expanded=True):
-        c_s1, c_s2 = st.columns(2)
-        with c_s1:
-            mode_selection = st.radio("Mod:", ["C/H Ekstresi", "Sigorta Poliçesi"])
-        with c_s2:
-            rol_secimi = st.radio("Rol:", ["Biz Alıcıyız", "Biz Satıcıyız"])
-
-rol_kodu = "Biz Alıcıyız" if "Alıcıyız" in rol_secimi else "Biz Satıcıyız"
-is_insurance = (mode_selection == "Sigorta Poliçesi")
+c1, c2 = st.columns([1, 3])
+with c1: mode = st.radio("Mod:", ["C/H Ekstresi", "Sigorta Poliçesi"])
+with c2: rol = st.radio("Rol:", ["Biz Alıcıyız", "Biz Satıcıyız"], horizontal=True)
+rol_kodu = "Biz Alıcıyız" if "Alıcıyız" in rol else "Biz Satıcıyız"
+is_ins = (mode == "Sigorta Poliçesi")
 
 st.divider()
 col1, col2 = st.columns(2)
 
+# SOL
 with col1:
     st.subheader("🏢 Bizim Kayıtlar")
-    file1 = st.file_uploader("Bizim Dosya", type=["xlsx", "xls"], key="f1")
-    config1 = {'rol_kodu': rol_kodu}
-    extra_cols_biz = [] 
-    if file1:
-        df1 = pd.read_excel(file1)
-        with st.expander("Görünüm"): st.dataframe(df1.head(5), use_container_width=True)
-        cols1 = ["Seçiniz..."] + df1.columns.tolist()
-        c1, c2 = st.columns(2)
-        with c1: config1['tarih_col'] = st.selectbox("Tarih", cols1[1:], key="d1")
-        with c2: config1['belge_col'] = st.selectbox("Belge No / Poliçe No", cols1[1:], key="doc1")
+    f1 = st.file_uploader("Dosya", type=["xlsx"], key="f1")
+    cf1 = {'rol_kodu': rol_kodu}
+    if f1:
+        d1 = pd.read_excel(f1)
+        cl1 = ["Seçiniz..."] + d1.columns.tolist()
+        cf1['tarih_col'] = st.selectbox("Tarih", cl1[1:], key="d1")
+        cf1['belge_col'] = st.selectbox("Belge No", cl1[1:], key="doc1")
         
-        if not is_insurance:
-            st.info("📅 Ödeme")
-            config1['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi (Valör)", cols1, key="pd1")
-            config1['odeme_ref_col'] = st.selectbox("Ödeme Ref/Dekont No", cols1, key="pref1")
-        
-        st.success("💰 Tutar")
-        tutar_yapi = st.radio("Tutar Tipi", ["Ayrı Kolonlar", "Tek Kolon"], key="r1", horizontal=True)
-        config1['tutar_tipi'] = tutar_yapi
-        if tutar_yapi == "Tek Kolon": config1['tutar_col'] = st.selectbox("Tutar", cols1[1:], key="amt1")
+        if not is_ins:
+            cf1['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi", cl1, key="pd1")
+            cf1['odeme_ref_col'] = st.selectbox("Ödeme Ref", cl1, key="pref1")
         else:
-            c5, c6 = st.columns(2)
-            with c5: config1['borc_col'] = st.selectbox("Borç", cols1[1:], key="b1")
-            with c6: config1['alacak_col'] = st.selectbox("Alacak", cols1[1:], key="a1")
-        c3, c4 = st.columns(2)
-        with c3: config1['doviz_cinsi_col'] = st.selectbox("Para Birimi", cols1, key="cur1")
-        with c4: config1['doviz_tutar_col'] = st.selectbox("Döviz Tutarı", cols1, key="cur_amt1")
-        extra_cols_biz = st.multiselect("Rapora Eklenecek Sütunlar (Biz):", options=df1.columns.tolist(), key="multi1")
+            # SİGORTA MODUNDA BİZİM TARAFTA DA ÖDEME FİLTRESİ
+            st.info("💳 Ödeme Filtresi")
+            fcol = st.selectbox("İşlem Türü:", cl1, key="ftur1")
+            if fcol and fcol!="Seçiniz...":
+                uv = d1[fcol].astype(str).unique().tolist()
+                fv = st.multiselect("Ödeme Olanlar:", uv, key="fvals1")
+                cf1['odeme_turu_sutunu'] = fcol
+                cf1['odeme_turu_degerleri'] = fv
 
+        st.caption("Tutar")
+        ty1 = st.radio("Tip", ["Ayrı", "Tek"], key="r1", horizontal=True)
+        cf1['tutar_tipi'] = "Tek Kolon" if ty1=="Tek" else "Ayrı Kolonlar"
+        if ty1=="Tek": cf1['tutar_col'] = st.selectbox("Tutar", cl1[1:], key="amt1")
+        else:
+            cf1['borc_col'] = st.selectbox("Borç", cl1[1:], key="b1")
+            cf1['alacak_col'] = st.selectbox("Alacak", cl1[1:], key="a1")
+        
+        cf1['doviz_cinsi_col'] = st.selectbox("PB", cl1, key="cur1")
+        cf1['doviz_tutar_col'] = st.selectbox("Döviz Tutar", cl1, key="cur_amt1")
+        ex_biz = st.multiselect("Ekstra:", d1.columns.tolist(), key="m1")
+
+# SAĞ
 with col2:
     st.subheader("🏭 Karşı Taraf")
-    files2 = st.file_uploader("Karşı Dosyalar", type=["xlsx", "xls"], accept_multiple_files=True, key="f2")
-    config2 = {'rol_kodu': rol_kodu}
-    extra_cols_onlar = []
-    if files2:
-        all_dfs = [pd.read_excel(f) for f in files2]
-        df2 = pd.concat(all_dfs, ignore_index=True)
-        with st.expander("Görünüm"): st.dataframe(df2.head(5), use_container_width=True)
-        cols2 = ["Seçiniz..."] + df2.columns.tolist()
-        c1, c2 = st.columns(2)
-        with c1: config2['tarih_col'] = st.selectbox("Tarih", cols2[1:], key="d2")
+    f2 = st.file_uploader("Dosya", type=["xlsx"], accept_multiple_files=True, key="f2")
+    cf2 = {'rol_kodu': rol_kodu}
+    if f2:
+        dfs = [pd.read_excel(f) for f in f2]
+        d2 = pd.concat(dfs, ignore_index=True)
+        cl2 = ["Seçiniz..."] + d2.columns.tolist()
+        cf2['tarih_col'] = st.selectbox("Tarih", cl2[1:], key="d2")
         
-        if is_insurance:
-            # SİGORTA ÖZEL ALANLARI
-            c_pol, c_zey = st.columns(2)
-            with c_pol: config2['police_col'] = st.selectbox("Poliçe No", cols2[1:], key="pol2")
-            with c_zey: config2['zeyil_col'] = st.selectbox("Zeyil No", cols2[1:], key="zey2")
-            config2['belge_col'] = ""
+        if is_ins:
+            c_p, c_z = st.columns(2)
+            cf2['police_col'] = c_p.selectbox("Poliçe", cl2[1:], key="pol2")
+            cf2['zeyil_col'] = c_z.selectbox("Zeyil", cl2[1:], key="zey2")
             
-            st.markdown("---")
-            st.caption("❌ Hariç Tutulacaklar")
-            filtre_col = st.selectbox("İşlem Türü Sütunu:", cols2, key="ftur")
-            if filtre_col and filtre_col != "Seçiniz...":
-                unique_vals = df2[filtre_col].astype(str).unique().tolist()
-                filtre_vals = st.multiselect("Çıkarılacaklar (Ödeme vb.):", unique_vals, key="fvals")
-                config2['filtre_sutunu'] = filtre_col
-                config2['filtre_degerleri'] = filtre_vals
+            st.info("💳 Ödeme Filtresi")
+            fcol = st.selectbox("İşlem Türü:", cl2, key="ftur2")
+            if fcol and fcol!="Seçiniz...":
+                uv = d2[fcol].astype(str).unique().tolist()
+                fv = st.multiselect("Ödeme Olanlar:", uv, key="fvals2")
+                cf2['odeme_turu_sutunu'] = fcol
+                cf2['odeme_turu_degerleri'] = fv
         else:
-            with c2: config2['belge_col'] = st.selectbox("Fatura/Belge No", cols2[1:], key="doc2")
-            if not is_insurance:
-                st.info("📅 Ödeme")
-                config2['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi (Valör)", cols2, key="pd2")
-                config2['odeme_ref_col'] = st.selectbox("Ödeme Ref/Dekont No", cols2, key="pref2")
+            cf2['belge_col'] = st.selectbox("Belge No", cl2[1:], key="doc2")
+            cf2['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi", cl2, key="pd2")
+            cf2['odeme_ref_col'] = st.selectbox("Ödeme Ref", cl2, key="pref2")
 
-        st.success("💰 Tutar")
-        tutar_yapi2 = st.radio("Tutar Tipi", ["Ayrı Kolonlar", "Tek Kolon"], key="r2", horizontal=True)
-        config2['tutar_tipi'] = tutar_yapi2
-        if tutar_yapi2 == "Tek Kolon": config2['tutar_col'] = st.selectbox("Tutar", cols2[1:], key="amt2")
+        st.caption("Tutar")
+        ty2 = st.radio("Tip", ["Ayrı", "Tek"], key="r2", horizontal=True)
+        cf2['tutar_tipi'] = "Tek Kolon" if ty2=="Tek" else "Ayrı Kolonlar"
+        if ty2=="Tek": cf2['tutar_col'] = st.selectbox("Tutar", cl2[1:], key="amt2")
         else:
-            c5, c6 = st.columns(2)
-            with c5: config2['borc_col'] = st.selectbox("Borç", cols2[1:], key="b2")
-            with c6: config2['alacak_col'] = st.selectbox("Alacak", cols2[1:], key="a2")
-        c3, c4 = st.columns(2)
-        with c3: config2['doviz_cinsi_col'] = st.selectbox("Para Birimi", cols2, key="cur2")
-        with c4: config2['doviz_tutar_col'] = st.selectbox("Döviz Tutarı", cols2, key="cur_amt2")
-        extra_cols_onlar = st.multiselect("Rapora Eklenecek Sütunlar (Karşı):", options=df2.columns.tolist(), key="multi2")
+            cf2['borc_col'] = st.selectbox("Borç", cl2[1:], key="b2")
+            cf2['alacak_col'] = st.selectbox("Alacak", cl2[1:], key="a2")
+        
+        cf2['doviz_cinsi_col'] = st.selectbox("PB", cl2, key="cur2")
+        cf2['doviz_tutar_col'] = st.selectbox("Döviz Tutar", cl2, key="cur_amt2")
+        ex_onlar = st.multiselect("Ekstra:", d2.columns.tolist(), key="m2")
 
 st.divider()
 
-if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
-    if file1 and files2:
+if st.button("🚀 Başlat", type="primary", use_container_width=True):
+    if f1 and f2:
         try:
-            start_time = time.time()
-            with st.spinner('Analiz yapılıyor...'):
-                clean_biz, doviz_biz, orig_biz = veri_hazirla_ve_grupla(df1, config1, "Biz", is_insurance, extra_cols_biz)
-                clean_onlar, doviz_onlar, orig_onlar = veri_hazirla_ve_grupla(df2, config2, "Onlar", is_insurance, extra_cols_onlar)
+            start = time.time()
+            with st.spinner('İşleniyor...'):
+                # 1. HAZIRLIK VE AYRIŞTIRMA
+                # Bizim
+                raw_biz, pay_biz, dv_biz = veri_hazirla(d1, cf1, "Biz", is_ins, ex_biz)
+                grp_biz = grupla(raw_biz, dv_biz)
                 
-                df_ozet_rapor = ozet_rapor_olustur(clean_biz, clean_onlar)
-                doviz_raporda = doviz_biz or doviz_onlar
-                matched_onlar_indices = set()
+                # Onların
+                raw_onlar, pay_onlar, dv_onlar = veri_hazirla(d2, cf2, "Onlar", is_ins, ex_onlar)
+                grp_onlar = grupla(raw_onlar, dv_onlar)
                 
-                onlar_dict_id = {}
-                onlar_dict_pay_id = {}
-                onlar_dict_tutar = {}
-
-                for idx, row in clean_onlar.iterrows():
+                doviz_raporda = dv_biz or dv_onlar
+                
+                # --- ÖZET TABLO (HAM VERİDEN) ---
+                # Ödemeler dahil tüm veriyi birleştirip özet çıkar
+                all_biz = pd.concat([raw_biz, pay_biz])
+                all_onlar = pd.concat([raw_onlar, pay_onlar])
+                df_ozet = ozet_rapor_olustur(all_biz, all_onlar)
+                
+                # --- EŞLEŞTİRME (POLİÇELER / ANA LİSTE) ---
+                matched_ids = set()
+                dict_onlar_id = {}
+                dict_onlar_tutar = {}
+                
+                for idx, row in grp_onlar.iterrows():
                     mid = row['Match_ID']
                     if mid:
-                        if mid not in onlar_dict_id: onlar_dict_id[mid] = []
-                        onlar_dict_id[mid].append(row)
+                        if mid not in dict_onlar_id: dict_onlar_id[mid] = []
+                        dict_onlar_id[mid].append(row)
                     
-                    if not is_insurance:
-                        pid = row['Payment_ID']
-                        if pid and len(pid) > 2:
-                            if pid not in onlar_dict_pay_id: onlar_dict_pay_id[pid] = []
-                            onlar_dict_pay_id[pid].append(row)
-                        
-                    val_borc = round(row['Borc'], 2)
-                    val_alacak = round(row['Alacak'], 2)
-                    curr = row['Para_Birimi']
-                    key_borc = f"{val_borc}_{curr}"
-                    key_alacak = f"{val_alacak}_{curr}"
-                    if key_borc not in onlar_dict_tutar: onlar_dict_tutar[key_borc] = []
-                    onlar_dict_tutar[key_borc].append(row)
-                    if key_alacak not in onlar_dict_tutar: onlar_dict_tutar[key_alacak] = []
-                    onlar_dict_tutar[key_alacak].append(row)
+                    # Tutar Anahtarı (Mutlak Değer)
+                    # Sigorta modunda yön (borç/alacak) önemsiz, mutlak tutar önemli
+                    amt = abs(row['Borc'] - row['Alacak'])
+                    key_amt = f"{round(amt, 2)}_{row['Para_Birimi']}"
+                    if key_amt not in dict_onlar_tutar: dict_onlar_tutar[key_amt] = []
+                    dict_onlar_tutar[key_amt].append(row)
 
                 eslesenler = []
-                eslesen_odemeler = [] 
-                unmatched_biz = []
-
-                for idx, row in clean_biz.iterrows():
-                    match_found = False
-                    aranan_tutar = 0
-                    aranan_yon = "" 
+                un_biz = []
+                
+                for idx, row in grp_biz.iterrows():
+                    found = False
+                    # Bizim Tutar (Mutlak)
+                    my_amt = abs(row['Borc'] - row['Alacak'])
                     
-                    if row['Borc'] > 0: aranan_tutar = row['Borc']; aranan_yon = 'Alacak'
-                    elif row['Alacak'] > 0: aranan_tutar = row['Alacak']; aranan_yon = 'Borc'
-                    
-                    if aranan_tutar > 0:
-                        
-                        def make_row(durum, aday_row, real_fark_tl, real_fark_doviz=0):
-                            data = {
-                                "Durum": durum, "Belge No": row['Orijinal_Belge_No'],
-                                "Tarih (Biz)": safe_strftime(row['Tarih']),
-                                "Tarih (Onlar)": safe_strftime(aday_row['Tarih']),
-                                "Tutar (Biz)": aranan_tutar, "Tutar (Onlar)": aday_row[aranan_yon],
-                                "Fark (TL)": real_fark_tl
-                            }
-                            if doviz_raporda:
-                                data["PB"] = row['Para_Birimi']
-                                data["Döviz (Biz)"] = row['Doviz_Tutari']
-                                data["Döviz (Onlar)"] = aday_row['Doviz_Tutari']
-                                data["Fark (Döviz)"] = real_fark_doviz
-                            
-                            for c in extra_cols_biz: data[f"BİZ: {c}"] = str(row.get(c, ""))
-                            for c in extra_cols_onlar: data[f"KARŞI: {c}"] = str(aday_row.get(c, ""))
-                            return data
-
-                        if is_insurance:
-                            # SİGORTA MODU: MUTLAK DEĞER EŞLEŞTİRME
-                            # Farkı 0 göstermek için: abs(Biz) - abs(Onlar)
-                            
-                            # 1. TUTAR (KESİN)
-                            key = f"{round(aranan_tutar, 2)}_{row['Para_Birimi']}"
-                            if key in onlar_dict_tutar:
-                                candidates = onlar_dict_tutar[key]
-                                unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                best_match = None
-                                for cand in (unused if unused else candidates):
-                                    if pd.notna(row['Tarih']) and pd.notna(cand['Tarih']):
-                                        if row['Tarih'] == cand['Tarih']: 
-                                            best_match = cand
-                                            break
-                                if best_match is not None:
-                                    matched_onlar_indices.add(best_match['unique_idx'])
-                                    eslesenler.append(make_row("✅ Tam Eşleşen Poliçe (Tutar)", best_match, 0.0, 0.0))
-                                    match_found = True
-
-                            # 2. POLİÇE NO
-                            mid = row['Match_ID']
-                            if not match_found and mid and mid in onlar_dict_id:
-                                candidates = onlar_dict_id[mid]
-                                unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                pool = unused if unused else candidates
-                                best_candidate = None
-                                min_diff_abs = float('inf')
-                                for cand in pool:
-                                    # MUTLAK DEĞER FARKI
-                                    diff = abs(abs(cand[aranan_yon]) - abs(aranan_tutar))
-                                    if diff < min_diff_abs:
-                                        min_diff_abs = diff
-                                        best_candidate = cand
-                                
-                                if best_candidate is not None:
-                                    match_found = True
-                                    matched_onlar_indices.add(best_candidate['unique_idx'])
-                                    
-                                    # FARK HESABI: Mutlak değerler arası fark
-                                    real_fark_tl = abs(aranan_tutar) - abs(best_candidate[aranan_yon])
-                                    real_fark_doviz = 0
-                                    if doviz_raporda:
-                                        real_fark_doviz = abs(row['Doviz_Tutari']) - abs(best_candidate['Doviz_Tutari'])
-
-                                    durum = ""
-                                    if min_diff_abs < 0.1: durum = "✅ Tam Eşleşme"
-                                    else: durum = "⚠️ Tutar Farkı"
-                                    
-                                    eslesenler.append(make_row(durum, best_candidate, real_fark_tl, real_fark_doviz))
-
-                        else:
-                            # NORMAL MOD
-                            pid = row['Payment_ID']
-                            if not match_found and pid and len(pid) > 2:
-                                if pid in onlar_dict_pay_id:
-                                    candidates = onlar_dict_pay_id[pid]
-                                    unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                    best_candidate = None
-                                    min_diff = float('inf')
-                                    for cand in (unused if unused else candidates):
-                                        diff = abs(cand[aranan_yon] - aranan_tutar)
-                                        if diff < min_diff: min_diff = diff; best_candidate = cand
-                                    
-                                    if best_candidate is not None and min_diff < 0.1:
-                                        match_found = True
-                                        matched_onlar_indices.add(best_candidate['unique_idx'])
-                                        eslesen_odemeler.append(make_row("✅ Referans Eşleşmesi", best_candidate, 0.0))
-
-                            mid = row['Match_ID']
-                            if not match_found and mid and mid in onlar_dict_id:
-                                candidates = onlar_dict_id[mid]
-                                unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                pool = unused if unused else candidates
-                                best_candidate = None
-                                min_diff_abs = float('inf')
-                                filtered = [c for c in pool if c['Para_Birimi'] == row['Para_Birimi']]
-                                search_pool = filtered if filtered else pool
-                                for cand in search_pool:
-                                    diff = abs(cand[aranan_yon] - aranan_tutar)
-                                    if diff < min_diff_abs: min_diff_abs = diff; best_candidate = cand
-                                
-                                if best_candidate is not None:
-                                    match_found = True
-                                    matched_onlar_indices.add(best_candidate['unique_idx'])
-                                    real_fark_tl = aranan_tutar - best_candidate[aranan_yon]
-                                    real_fark_doviz = 0
-                                    durum = ""
-                                    if min_diff_abs < 0.1: durum = "✅ Tam Eşleşme"
-                                    else: durum = "⚠️ Tutar Farkı"
-                                    eslesenler.append(make_row(durum, best_candidate, real_fark_tl, real_fark_doviz))
-
-                            if not match_found:
-                                key = f"{round(aranan_tutar, 2)}_{row['Para_Birimi']}"
-                                if key in onlar_dict_tutar:
-                                    candidates = onlar_dict_tutar[key]
-                                    unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                    best_match = None
-                                    for cand in (unused if unused else candidates):
-                                        if pd.notna(row['Tarih_Odeme']) and pd.notna(cand['Tarih_Odeme']):
-                                            days_diff = abs((row['Tarih_Odeme'] - cand['Tarih_Odeme']).days)
-                                            if days_diff <= 3: best_match = cand; break
-                                    if best_match is not None:
-                                        matched_onlar_indices.add(best_match['unique_idx'])
-                                        eslesen_odemeler.append(make_row("✅ Ödeme/Tarih Eşleşmesi", best_match, 0.0, 0.0))
-                                        match_found = True
-                        
-                        if not match_found:
-                            data_unmatched = {
-                                "Durum": "🔴 Bizde Var / Onlarda Yok",
-                                "Belge No": row['Orijinal_Belge_No'],
-                                "Tarih": safe_strftime(row['Tarih']),
-                                "Tutar": aranan_tutar,
-                                "Döviz Tutar": row['Doviz_Tutari'] if doviz_raporda else 0
-                            }
-                            for c in extra_cols_biz: data_unmatched[f"BİZ: {c}"] = str(row.get(c, ""))
-                            unmatched_biz.append(data_unmatched)
-
-                unmatched_onlar = []
-                for idx, row in clean_onlar.iterrows():
-                    if row['unique_idx'] not in matched_onlar_indices:
-                        tutar = row['Borc'] if row['Borc'] > 0 else row['Alacak']
-                        data_un = {
-                            "Durum": "🔵 Onlarda Var / Bizde Yok",
-                            "Belge No": row['Orijinal_Belge_No'],
-                            "Tarih": safe_strftime(row['Tarih']),
-                            "Tutar": tutar,
-                            "Döviz Tutar": row['Doviz_Tutari'] if doviz_raporda else 0
+                    def make_row(durum, aday, fark_tl, fark_dv=0):
+                        d = {
+                            "Durum": durum, "Belge No": row['Orijinal_Belge_No'],
+                            "Tarih (Biz)": safe_strftime(row['Tarih']), "Tarih (Onlar)": safe_strftime(aday['Tarih']),
+                            "Tutar (Biz)": my_amt, "Tutar (Onlar)": abs(aday['Borc'] - aday['Alacak']),
+                            "Fark (TL)": fark_tl
                         }
-                        for c in extra_cols_onlar: data_un[f"KARŞI: {c}"] = str(row.get(c, ""))
-                        unmatched_onlar.append(data_un)
+                        if doviz_raporda:
+                            d["PB"] = row['Para_Birimi']
+                            d["Döviz (Biz)"] = row['Doviz_Tutari']
+                            d["Döviz (Onlar)"] = aday['Doviz_Tutari']
+                            d["Fark (Döviz)"] = fark_dv
+                        
+                        for c in ex_biz: d[f"BİZ: {c}"] = str(row.get(c, ""))
+                        for c in ex_onlar: d[f"KARŞI: {c}"] = str(aday.get(c, ""))
+                        return d
 
-            st.session_state.sonuclar = {
-                "ozet": df_ozet_rapor,
-                "eslesen": pd.DataFrame(eslesenler),
-                "odeme": pd.DataFrame(eslesen_odemeler),
-                "un_biz": pd.DataFrame(unmatched_biz),
-                "un_onlar": pd.DataFrame(unmatched_onlar)
-            }
-            st.session_state.analiz_yapildi = True
-            st.success(f"Analiz Tamamlandı! Süre: {time.time() - start_time:.2f} saniye.")
+                    # 1. ADIM: TUTAR ÖNCELİKLİ (SİGORTA)
+                    if is_ins:
+                        key = f"{round(my_amt, 2)}_{row['Para_Birimi']}"
+                        if key in dict_onlar_tutar:
+                            # Tarih kontrolü
+                            cands = dict_onlar_tutar[key]
+                            best = None
+                            for c in cands:
+                                if c['unique_idx'] not in matched_ids:
+                                    # Tarih de tutuyorsa süper
+                                    if pd.notna(row['Tarih']) and row['Tarih'] == c['Tarih']:
+                                        best = c; break
+                                    # Tutmasa da adaydır (Tutar tuttuğu için)
+                                    if best is None: best = c
+                            
+                            if best:
+                                matched_ids.add(best['unique_idx'])
+                                eslesenler.append(make_row("✅ Tam Eşleşme", best, 0.0))
+                                found = True
+
+                    # 2. ADIM: BELGE NO
+                    if not found and row['Match_ID']:
+                        if row['Match_ID'] in dict_onlar_id:
+                            cands = dict_onlar_id[row['Match_ID']]
+                            best = None
+                            min_diff = float('inf')
+                            for c in cands:
+                                if c['unique_idx'] not in matched_ids:
+                                    # Mutlak fark
+                                    their_amt = abs(c['Borc'] - c['Alacak'])
+                                    diff = abs(my_amt - their_amt)
+                                    if diff < min_diff:
+                                        min_diff = diff
+                                        best = c
+                            
+                            if best:
+                                matched_ids.add(best['unique_idx'])
+                                diff_real = my_amt - abs(best['Borc'] - best['Alacak'])
+                                status = "✅ Tam Eşleşme" if min_diff < 0.1 else "❌ Tutar Farkı"
+                                eslesenler.append(make_row(status, best, diff_real))
+                                found = True
+
+                    if not found:
+                        # Eşleşmedi
+                        d_un = {
+                            "Durum": "🔴 Bizde Var", "Belge No": row['Orijinal_Belge_No'],
+                            "Tarih": safe_strftime(row['Tarih']), "Tutar": my_amt
+                        }
+                        for c in ex_biz: d_un[f"BİZ: {c}"] = str(row.get(c, ""))
+                        un_biz.append(d_un)
+
+                # Onlarda Kalanlar
+                un_onlar = []
+                for idx, row in grp_onlar.iterrows():
+                    if row['unique_idx'] not in matched_ids:
+                        amt = abs(row['Borc'] - row['Alacak'])
+                        d_un = {
+                            "Durum": "🔵 Onlarda Var", "Belge No": row['Orijinal_Belge_No'],
+                            "Tarih": safe_strftime(row['Tarih']), "Tutar": amt
+                        }
+                        for c in ex_onlar: d_un[f"KARŞI: {c}"] = str(row.get(c, ""))
+                        un_onlar.append(d_un)
+
+                # --- ÖDEME EŞLEŞTİRME (TÜR BAZLI - YENİ) ---
+                eslesen_odeme = []
+                if not pay_biz.empty and not pay_onlar.empty:
+                    # Basit Tarih+Tutar Eşleşmesi
+                    # Onların ödemeleri sözlüğe al
+                    dict_pay = {}
+                    used_pay = set()
+                    for idx, row in pay_onlar.iterrows():
+                        amt = abs(row['Borc'] - row['Alacak'])
+                        key = f"{safe_strftime(row['Tarih'])}_{round(amt, 2)}_{row['Para_Birimi']}"
+                        if key not in dict_pay: dict_pay[key] = []
+                        dict_pay[key].append(idx)
+                    
+                    for idx, row in pay_biz.iterrows():
+                        amt = abs(row['Borc'] - row['Alacak'])
+                        key = f"{safe_strftime(row['Tarih'])}_{round(amt, 2)}_{row['Para_Birimi']}"
+                        
+                        if key in dict_pay:
+                            # Kullanılmamış bul
+                            found_idx = None
+                            for i in dict_pay[key]:
+                                if i not in used_pay:
+                                    found_idx = i
+                                    break
+                            
+                            if found_idx is not None:
+                                used_pay.add(found_idx)
+                                aday = pay_onlar.loc[found_idx]
+                                eslesen_odeme.append({
+                                    "Durum": "✅ Ödeme Eşleşti",
+                                    "Tarih": safe_strftime(row['Tarih']),
+                                    "Tutar": amt,
+                                    "PB": row['Para_Birimi']
+                                })
+
+                # KAYDET
+                st.session_state.sonuclar = {
+                    "ozet": df_ozet,
+                    "eslesen": pd.DataFrame(eslesenler),
+                    "odeme": pd.DataFrame(eslesen_odeme),
+                    "un_biz": pd.DataFrame(un_biz),
+                    "un_onlar": pd.DataFrame(un_onlar)
+                }
+                st.session_state.analiz_yapildi = True
+                st.success(f"Bitti! Süre: {time.time() - start:.2f} sn")
 
         except Exception as e:
             st.error(f"Hata: {e}")
@@ -564,48 +542,29 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
 if st.session_state.get('analiz_yapildi', False):
     res = st.session_state.sonuclar
     
-    total_recs = len(res["eslesen"]) + len(res["odeme"]) + len(res["un_biz"]) + len(res["un_onlar"])
+    c1, c2 = st.columns(2)
     
-    if total_recs > 0:
-        match_rate = ((len(res["eslesen"]) + len(res["odeme"])) / total_recs) * 100
-        miss_rate = ((len(res["un_biz"]) + len(res["un_onlar"])) / total_recs) * 100
-        st.markdown("### 📊 Durum Özeti")
-        k1, k2, k3 = st.columns(3)
-        k1.metric("✅ Eşleşme Oranı", f"%{match_rate:.1f}")
-        k2.metric("❌ Fark/Eksik Oranı", f"%{miss_rate:.1f}")
-        k3.metric("📄 Toplam Kayıt", f"{total_recs} Adet")
-        st.divider()
-
-    df_eslesen_temiz = res["eslesen"]
-
-    dfs_to_export = {
-        "ÖZET_BAKIYE": res["ozet"],
-        "Eşleşen Poliçeler": df_eslesen_temiz,
-        "Bizde Var - Yok": res["un_biz"],
-        "Onlarda Var - Yok": res["un_onlar"]
+    # Rapor Hazırla
+    df_es = res["eslesen"]
+    df_ok = df_es[~df_es['Durum'].str.contains('❌', na=False)] if not df_es.empty else pd.DataFrame()
+    df_err = df_es[df_es['Durum'].str.contains('❌', na=False)] if not df_es.empty else pd.DataFrame()
+    
+    dfs_exp = {
+        "Özet": res["ozet"],
+        "Eşleşenler": df_ok,
+        "Ödemeler": res["odeme"],
+        "Farklılar": df_err,
+        "Bizde Fazla": res["un_biz"],
+        "Onlarda Fazla": res["un_onlar"]
     }
     
-    if not is_insurance:
-        dfs_to_export["Eşleşen Ödemeler"] = res["odeme"]
-
-    c_down1, c_down2 = st.columns(2)
-    with c_down1:
-        st.download_button("📥 Excel İndir (Ayrı Sayfalar)", excel_indir_coklu(dfs_to_export), "Mutabakat_Split.xlsx")
-    with c_down2:
-        st.download_button("📥 Excel İndir (Tek Liste/Özet)", excel_indir_tek_sayfa(dfs_to_export), "Mutabakat_Tek_Liste.xlsx", type="primary")
-
-    tabs_list = ["📈 Özet", "✅ Poliçeler/Faturalar", "🔴 Bizde Var / Yok", "🔵 Onlarda Var / Yok"]
-    if not is_insurance: tabs_list.insert(2, "💰 Ödemeler")
+    with c1: st.download_button("📥 İndir (Ayrı Sayfalar)", excel_indir_coklu(dfs_exp), "Rapor.xlsx")
+    with c2: st.download_button("📥 İndir (Tek Liste)", excel_indir_tek_sayfa(dfs_exp), "Ozet.xlsx")
     
-    tabs = st.tabs(tabs_list)
-    
-    with tabs[0]: st.dataframe(res["ozet"].style.format(precision=2), use_container_width=True)
-    with tabs[1]: st.dataframe(df_eslesen_temiz, use_container_width=True)
-    
-    if not is_insurance:
-        with tabs[2]: st.dataframe(res["odeme"], use_container_width=True)
-        idx_offset = 1
-    else: idx_offset = 0
-        
-    with tabs[2+idx_offset]: st.dataframe(res["un_biz"], use_container_width=True)
-    with tabs[3+idx_offset]: st.dataframe(res["un_onlar"], use_container_width=True)
+    t = st.tabs(["Özet", "Eşleşen", "Ödeme", "Farklı", "Bizde Fazla", "Onlarda Fazla"])
+    with t[0]: st.dataframe(res["ozet"])
+    with t[1]: st.dataframe(df_ok)
+    with t[2]: st.dataframe(res["odeme"])
+    with t[3]: st.dataframe(df_err)
+    with t[4]: st.dataframe(res["un_biz"])
+    with t[5]: st.dataframe(res["un_onlar"])

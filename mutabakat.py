@@ -4,9 +4,16 @@ import re
 import io
 import time
 
-# --- ARAYÜZ AYARLARI ---
+# --- 1. ARAYÜZ AYARLARI (EN BAŞTA) ---
 st.set_page_config(page_title="Mutabakat Pro", layout="wide")
 
+# --- 2. SESSION STATE BAŞLATMA (KRİTİK: HATA ALMAMAK İÇİN EN BAŞTA) ---
+if 'analiz_yapildi' not in st.session_state:
+    st.session_state['analiz_yapildi'] = False
+if 'sonuclar' not in st.session_state:
+    st.session_state['sonuclar'] = {}
+
+# --- CSS STİL ---
 hide_st_style = """
             <style>
             #MainMenu {visibility: hidden;}
@@ -18,12 +25,6 @@ hide_st_style = """
             </style>
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
-
-# --- SESSION STATE ---
-if 'analiz_yapildi' not in st.session_state:
-    st.session_state['analiz_yapildi'] = False
-if 'sonuclar' not in st.session_state:
-    st.session_state['sonuclar'] = {}
 
 # --- YARDIMCI FONKSİYONLAR ---
 
@@ -98,7 +99,7 @@ def ozet_rapor_olustur(df_biz, df_onlar):
 def veri_hazirla_ve_grupla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
     df_copy = df.copy()
     
-    # --- FİLTRELEME (SİGORTA MODU İÇİN) ---
+    # FİLTRELEME (SİGORTA İÇİN)
     if is_insurance_mode and 'filtre_sutunu' in config and 'filtre_degerleri' in config:
         col_filter = config['filtre_sutunu']
         vals_exclude = config['filtre_degerleri']
@@ -174,7 +175,6 @@ def veri_hazirla_ve_grupla(df, config, taraf_adi, is_insurance_mode=False, extra
         df_new['Borc'] = pd.to_numeric(df_copy[config['borc_col']], errors='coerce').fillna(0)
         df_new['Alacak'] = pd.to_numeric(df_copy[config['alacak_col']], errors='coerce').fillna(0)
     
-    # GRUPLAMA
     mask_ids = df_new['Match_ID'] != ""
     df_invoices = df_new[mask_ids]
     df_others = df_new[~mask_ids]
@@ -241,28 +241,25 @@ def veri_hazirla_ve_grupla(df, config, taraf_adi, is_insurance_mode=False, extra
     df_final['unique_idx'] = df_final.index
     return df_final, doviz_aktif, df
 
-# --- ARAYÜZ ---
+# --- 3. ANA ARAYÜZ ---
 
-# 1. ÜST BİLGİ ALANI (HEADER)
-c_logo, c_header = st.columns([1, 5])
-with c_header:
-    st.title("Mutabakat Pro")
-
-# 2. AYARLAR PANELİ (EN ÜSTTE)
-with st.container():
-    st.info("⚙️ **Çalışma Ayarları**")
-    c_mod, c_rol = st.columns(2)
-    with c_mod:
-        mode_selection = st.radio("Çalışma Modu:", ["C/H Ekstresi", "Sigorta Poliçesi"], horizontal=True)
-    with c_rol:
-        rol_secimi = st.radio("Ticari Rolümüz:", ["Biz Alıcıyız", "Biz Satıcıyız"], horizontal=True)
+# HEADER: Başlık ve Sağ Üst Gösterge
+c_head1, c_head2 = st.columns([3, 1])
+with c_head1:
+    st.title("🗂️ Mutabakat Pro")
+with c_head2:
+    # AYARLAR BURAYA TAŞINDI (Daha temiz görünüm)
+    mode_selection = st.selectbox("📂 Çalışma Modu", ["C/H Ekstresi", "Sigorta Poliçesi"])
+    rol_secimi = st.selectbox("🔄 Ticari Rol", ["Biz Alıcıyız", "Biz Satıcıyız"])
 
 rol_kodu = "Biz Alıcıyız" if "Alıcıyız" in rol_secimi else "Biz Satıcıyız"
 is_insurance = (mode_selection == "Sigorta Poliçesi")
 
-st.markdown("---")
+# GÖRSEL UYARI
+if is_insurance:
+    st.info("ℹ️ **Sigorta Poliçesi Modu Aktif:** Ödeme eşleşmeleri devre dışı, Tutar öncelikli arama aktif.")
 
-# 3. DOSYA YÜKLEME ALANLARI
+st.divider()
 col1, col2 = st.columns(2)
 
 # SOL TARAF
@@ -311,19 +308,20 @@ with col2:
         c1, c2 = st.columns(2)
         with c1: config2['tarih_col'] = st.selectbox("Tarih", cols2[1:], key="d2")
         
+        # SİGORTA MODU: POLİÇE VE ZEYİL ALANI
         if is_insurance:
-            st.warning("🔒 Sigorta Poliçesi Modu")
             c_pol, c_zey = st.columns(2)
             with c_pol: config2['police_col'] = st.selectbox("Poliçe No", cols2[1:], key="pol2")
             with c_zey: config2['zeyil_col'] = st.selectbox("Zeyil No", cols2[1:], key="zey2")
             config2['belge_col'] = ""
             
-            # FİLTRE ALANI
-            st.error("❌ Hariç Tutulacak Kayıtlar (Ödeme vb.)")
-            filtre_col = st.selectbox("İşlem Türü Sütunu Seçiniz:", cols2, key="ftur")
+            # FİLTRELEME ALANI
+            st.markdown("---")
+            st.caption("❌ Hariç Tutulacaklar")
+            filtre_col = st.selectbox("İşlem Türü Sütunu:", cols2, key="ftur")
             if filtre_col and filtre_col != "Seçiniz...":
                 unique_vals = df2[filtre_col].astype(str).unique().tolist()
-                filtre_vals = st.multiselect("Dikkate Alınmayacaklar:", unique_vals, key="fvals")
+                filtre_vals = st.multiselect("Çıkarılacaklar:", unique_vals, key="fvals")
                 config2['filtre_sutunu'] = filtre_col
                 config2['filtre_degerleri'] = filtre_vals
         else:
@@ -371,10 +369,11 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
                         if mid not in onlar_dict_id: onlar_dict_id[mid] = []
                         onlar_dict_id[mid].append(row)
                     
-                    pid = row['Payment_ID']
-                    if pid and len(pid) > 2:
-                        if pid not in onlar_dict_pay_id: onlar_dict_pay_id[pid] = []
-                        onlar_dict_pay_id[pid].append(row)
+                    if not is_insurance:
+                        pid = row['Payment_ID']
+                        if pid and len(pid) > 2:
+                            if pid not in onlar_dict_pay_id: onlar_dict_pay_id[pid] = []
+                            onlar_dict_pay_id[pid].append(row)
                         
                     val_borc = round(row['Borc'], 2)
                     val_alacak = round(row['Alacak'], 2)
@@ -423,52 +422,27 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
                             
                             return data
 
-                        # --- SİGORTA MODU MANTIĞI (TUTAR ÖNCELİKLİ) ---
                         if is_insurance:
-                            # 1. TUTAR (KESİN EŞLEŞME)
                             key = f"{round(aranan_tutar, 2)}_{row['Para_Birimi']}"
                             if key in onlar_dict_tutar:
                                 candidates = onlar_dict_tutar[key]
                                 unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
-                                
-                                # En iyi adayı bul (Tarih/Belge No kontrolü ile)
                                 best_match = None
-                                match_quality = 0 # 0: Tutar, 1: Tutar+Tarih, 2: Tutar+No, 3: Full
-                                
                                 for cand in (unused if unused else candidates):
-                                    score = 0
-                                    # Tarih tutuyor mu?
                                     if pd.notna(row['Tarih']) and pd.notna(cand['Tarih']):
-                                        if row['Tarih'] == cand['Tarih']: score += 1
-                                    # Belge No tutuyor mu?
-                                    if row['Match_ID'] and cand['Match_ID'] and row['Match_ID'] == cand['Match_ID']:
-                                        score += 2
-                                    
-                                    if score > match_quality:
-                                        match_quality = score
-                                        best_match = cand
-                                    elif best_match is None: # Hiçbiri tutmasa da tutar tuttuğu için al
-                                        best_match = cand
-                                
+                                        if row['Tarih'] == cand['Tarih']: 
+                                            best_match = cand
+                                            break
                                 if best_match is not None:
                                     matched_onlar_indices.add(best_match['unique_idx'])
-                                    
-                                    durum = ""
-                                    if match_quality == 3: durum = "✅ Tam Eşleşme"
-                                    elif match_quality == 2: durum = "✅ No/Tutar Eşleşti (Tarih Farklı)"
-                                    elif match_quality == 1: durum = "✅ Tarih/Tutar Eşleşti (No Farklı)"
-                                    else: durum = "⚠️ Tutar Eşleşti (Detay Farklı)"
-                                    
-                                    eslesenler.append(make_row(durum, best_match, 0.0, 0.0))
+                                    eslesen_odemeler.append(make_row("✅ Tarih/Tutar Eşleşmesi", best_match, 0.0, 0.0))
                                     match_found = True
 
-                            # 2. BELGE NO (Tutar tutmadıysa bile Numaradan bul)
                             mid = row['Match_ID']
                             if not match_found and mid and mid in onlar_dict_id:
                                 candidates = onlar_dict_id[mid]
                                 unused = [c for c in candidates if c['unique_idx'] not in matched_onlar_indices]
                                 pool = unused if unused else candidates
-                                
                                 best_candidate = None
                                 min_diff_abs = float('inf')
                                 for cand in pool:
@@ -484,14 +458,20 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
                                     real_fark_doviz = 0
                                     
                                     durum = ""
+                                    is_tl_match = min_diff_abs < 0.1
+                                    is_doviz_match = True
                                     if doviz_raporda:
                                         real_fark_doviz = row['Doviz_Tutari'] - best_candidate['Doviz_Tutari']
+                                        is_try = row['Para_Birimi'] in ['TRY', 'TL']
+                                        if not is_try: is_doviz_match = abs(real_fark_doviz) < 0.1
                                     
-                                    durum = "❌ Tutar Farkı"
+                                    if is_tl_match and is_doviz_match: durum = "✅ Tam Eşleşme"
+                                    elif is_tl_match: durum = "⚠️ Kur Farkı"
+                                    else: durum = "❌ Tutar Farkı"
                                     eslesenler.append(make_row(durum, best_candidate, real_fark_tl, real_fark_doviz))
 
                         else:
-                            # --- C/H MODU (NORMAL) ---
+                            # C/H MODU
                             pid = row['Payment_ID']
                             if not match_found and pid and len(pid) > 2:
                                 if pid in onlar_dict_pay_id:
@@ -600,6 +580,7 @@ if st.session_state.get('analiz_yapildi', False):
     if total_recs > 0:
         match_rate = ((len(res["eslesen"]) + len(res["odeme"])) / total_recs) * 100
         miss_rate = ((len(res["un_biz"]) + len(res["un_onlar"])) / total_recs) * 100
+        
         st.markdown("### 📊 Durum Özeti")
         k1, k2, k3 = st.columns(3)
         k1.metric("✅ Eşleşme Oranı", f"%{match_rate:.1f}")
@@ -617,22 +598,20 @@ if st.session_state.get('analiz_yapildi', False):
 
     dfs_to_export = {
         "ÖZET_BAKIYE": res["ozet"],
-        "Eşleşen Poliçeler": df_eslesen_temiz,
+        "Eşleşen Faturalar": df_eslesen_temiz,
+        "Eşleşen Ödemeler": res["odeme"],
         "Hatalı Eşleşmeler": df_hatali,
         "Bizde Var - Yok": res["un_biz"],
         "Onlarda Var - Yok": res["un_onlar"]
     }
     
-    if not is_insurance:
-        dfs_to_export["Eşleşen Ödemeler"] = res["odeme"]
-
     c_down1, c_down2 = st.columns(2)
     with c_down1:
         st.download_button("📥 Excel İndir (Ayrı Sayfalar)", excel_indir_coklu(dfs_to_export), "Mutabakat_Split.xlsx")
     with c_down2:
         st.download_button("📥 Excel İndir (Tek Liste/Özet)", excel_indir_tek_sayfa(dfs_to_export), "Mutabakat_Tek_Liste.xlsx", type="primary")
 
-    tabs_list = ["📈 Özet", "✅ Poliçeler/Faturalar", "⚠️ Hatalılar", "🔴 Bizde Var / Yok", "🔵 Onlarda Var / Yok"]
+    tabs_list = ["📈 Özet", "✅ Faturalar", "⚠️ Hatalılar", "🔴 Bizde Var / Yok", "🔵 Onlarda Var / Yok"]
     if not is_insurance: tabs_list.insert(2, "💰 Ödemeler")
     
     tabs = st.tabs(tabs_list)
@@ -641,20 +620,20 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res["ozet"].style.format(precision=2), use_container_width=True)
     with tabs[1]:
         if not df_eslesen_temiz.empty:
-            st.dataframe(df_eslesen_temiz.style.map(lambda v: 'color: green; font-weight: bold', subset=['Durum']).format(precision=2), use_container_width=True)
-        else: st.info("Eşleşme yok.")
+            st.dataframe(df_eslesen_temiz, use_container_width=True)
+        else: st.info("Fatura eşleşmesi yok.")
     
     if not is_insurance:
         with tabs[2]:
             if not res["odeme"].empty:
-                st.dataframe(res["odeme"].style.map(lambda v: 'color: blue', subset=['Durum']), use_container_width=True)
+                st.dataframe(res["odeme"], use_container_width=True)
             else: st.info("Ödeme eşleşmesi yok.")
         idx_offset = 1
     else: idx_offset = 0
         
     with tabs[2+idx_offset]:
         if not df_hatali.empty:
-            st.dataframe(df_hatali.style.map(lambda v: 'color: red', subset=['Durum']), use_container_width=True)
+            st.dataframe(df_hatali, use_container_width=True)
         else: st.success("Hata yok.")
     with tabs[3+idx_offset]:
         st.dataframe(res["un_biz"], use_container_width=True)

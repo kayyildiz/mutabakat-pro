@@ -9,7 +9,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # --- 1. ARAYÜZ VE HAFIZA ---
-st.set_page_config(page_title="Mutabakat Pro V50", layout="wide")
+st.set_page_config(page_title="Mutabakat Pro", layout="wide")
 
 # --- SESSION STATE (HAFIZA) ---
 if 'analiz_yapildi' not in st.session_state:
@@ -297,7 +297,7 @@ def grupla(df, is_doviz_aktif):
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])
-with c_title: st.title("💎 Mutabakat Pro V50") # Yeni İkon
+with c_title: st.title("💎 Mutabakat Pro") # Yeni İkon
 with c_settings:
     with st.expander("⚙️ Ayarlar", expanded=True):
         mode_selection = st.radio("Mod:", ["C/H Ekstresi", "Sigorta Poliçesi"])
@@ -702,3 +702,4 @@ if st.session_state.get('analiz_yapildi', False):
         
     with tabs[idx]: st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[idx+1]: st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+

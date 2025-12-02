@@ -5,7 +5,7 @@ import io
 import time
 
 # --- ARAYÜZ AYARLARI ---
-st.set_page_config(page_title="Mutabakat Pro V33", layout="wide")
+st.set_page_config(page_title="Mutabakat Pro", layout="wide")
 
 hide_st_style = """
             <style>
@@ -243,7 +243,7 @@ def veri_hazirla_ve_grupla(df, config, taraf_adi, is_insurance_mode=False, extra
 
 # --- ARAYÜZ ---
 
-st.title("🗂️ Mutabakat Pro V33")
+st.title("🗂️ Mutabakat Pro")
 
 col_mode1, col_mode2 = st.columns([1, 3])
 with col_mode1:
@@ -630,3 +630,4 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res["un_biz"], use_container_width=True)
     with tabs[4+idx_offset]:
         st.dataframe(res["un_onlar"], use_container_width=True)
+

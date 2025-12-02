@@ -5,8 +5,8 @@ import io
 import time
 import warnings
 
-# Uyarıları gizle
-warnings.filterwarnings('ignore')
+# Gereksiz uyarıları gizle
+warnings.filterwarnings("ignore")
 
 # --- 1. ARAYÜZ VE HAFIZA ---
 st.set_page_config(page_title="Mutabakat Pro V49", layout="wide")
@@ -262,6 +262,7 @@ def grupla(df, is_doviz_aktif):
             if not nt.empty: return nt['Doviz_Tutari'].max()
             return 0.0
         
+        # WARN FIX: Select only needed columns
         cols_needed = ['Match_ID', 'Para_Birimi', 'Doviz_Tutari']
         df_sub = df_ids[cols_needed].copy()
         
@@ -393,6 +394,9 @@ with col2:
 
 st.divider()
 
+# ==========================================
+# 4. ANALİZ MOTORU
+# ==========================================
 if st.button("🚀 Başlat", type="primary", use_container_width=True):
     if f1 and f2:
         try:
@@ -459,7 +463,8 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                     if pd.notna(row['Tarih']) and row['Tarih'] == c['Tarih']:
                                         best = c; break
                                     if best is None: best = c
-                            # HATA DÜZELTİLDİ: 'if best' YERİNE 'if best is not None'
+                            
+                            # HATALI KISIM DÜZELTİLDİ (if best: -> if best is not None:)
                             if best is not None:
                                 matched_ids.add(best['unique_idx'])
                                 eslesenler.append(make_row("✅ Tam Eşleşme", best, 0.0))
@@ -484,8 +489,8 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                     status = "✅ Tam Eşleşme" if min_diff < 0.1 else "⚠️ Tutar Farkı"
                                     eslesenler.append(make_row(status, best, diff_real, real_dv))
                                     found = True
-
                     else:
+                        # C/H MODU
                         if not found and row['Match_ID']:
                             if row['Match_ID'] in dict_onlar_id:
                                 cands = dict_onlar_id[row['Match_ID']]
@@ -523,8 +528,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         for c in ex_onlar: d_un[f"KARŞI: {c}"] = str(row.get(c, ""))
                         un_onlar.append(d_un)
 
-                # ÖDEME EŞLEŞTİRME
-                eslesen_odeme = []
                 if not pay_biz.empty and not pay_onlar.empty:
                     dict_pay = {}
                     used_pay = set()
@@ -537,7 +540,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                     for idx, row in pay_biz.iterrows():
                         amt = abs(row['Borc'] - row['Alacak'])
                         key = f"{safe_strftime(row['Tarih'])}_{round(amt, 2)}_{row['Para_Birimi']}"
-                        
                         if key in dict_pay:
                             found_idx = None
                             for i in dict_pay[key]:

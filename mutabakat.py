@@ -5,11 +5,11 @@ import io
 import time
 import warnings
 
-# Uyarıları gizle (Log kirliliğini ve kullanıcı paniğini önler)
+# Uyarıları gizle
 warnings.filterwarnings('ignore')
 
 # --- 1. ARAYÜZ VE HAFIZA ---
-st.set_page_config(page_title="Mutabakat Pro V48", layout="wide")
+st.set_page_config(page_title="Mutabakat Pro V49", layout="wide")
 
 if 'analiz_yapildi' not in st.session_state:
     st.session_state['analiz_yapildi'] = False
@@ -28,7 +28,7 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- 2. YARDIMCI FONKSİYONLAR (HATA KORUMALI) ---
+# --- 2. YARDIMCI FONKSİYONLAR ---
 
 def get_default_idx(options, target_name):
     for i, opt in enumerate(options):
@@ -46,10 +46,8 @@ def get_default_multiselect(options, targets):
 
 @st.cache_data
 def belge_no_temizle(val):
-    # KORUMA: Seri gelirse ilkini al
     if isinstance(val, (pd.Series, list, tuple)):
-        if len(val) > 0: val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
-    
+        val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
     if pd.isna(val): return ""
     s = str(val)
     res = ''.join(filter(str.isdigit, s))
@@ -59,13 +57,9 @@ def belge_no_temizle(val):
 @st.cache_data
 def referans_no_temizle(val):
     if isinstance(val, (pd.Series, list, tuple)):
-        if len(val) > 0: val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
-        
+        val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
     if pd.isna(val): return ""
-    
-    if isinstance(val, float):
-        val = f"{val:.0f}"
-
+    if isinstance(val, float): val = f"{val:.0f}"
     s = str(val).strip().upper()
     s = re.sub(r'[^A-Z0-9]', '', s)
     s = s.lstrip('0')
@@ -73,8 +67,7 @@ def referans_no_temizle(val):
 
 def safe_strftime(val):
     if isinstance(val, (pd.Series, list, tuple)):
-        if len(val) > 0: val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
-
+        val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
     if pd.isna(val): return ""
     try: return val.strftime('%d.%m.%Y')
     except: return ""
@@ -132,11 +125,9 @@ def ozet_rapor_olustur(df_biz_raw, df_onlar_raw):
     return ozet[cols]
 
 def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
-    # KORUMA 2: Mükerrer Kolonları SİL
     df = df.loc[:, ~df.columns.duplicated()]
     df_copy = df.copy()
     
-    # Ödeme Ayrıştırma
     df_payments = pd.DataFrame()
     filter_col = config.get('odeme_turu_sutunu')
     filter_vals = config.get('odeme_turu_degerleri')
@@ -157,7 +148,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
     else:
         df_new['Tarih_Odeme'] = df_new['Tarih']
 
-    # Match ID
     if is_insurance_mode and taraf_adi == "Onlar":
         pol = config.get('police_col')
         zey = config.get('zeyil_col')
@@ -179,7 +169,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
         df_new['Match_ID'] = df_new['Orijinal_Belge_No'].apply(lambda x: ''.join(filter(str.isdigit, str(x))))
         df_new['Match_ID'] = df_new['Match_ID'].replace(r'^0+', '', regex=True)
     
-    # Payment ID
     if not is_insurance_mode and config.get('odeme_ref_col') and config['odeme_ref_col'] != "Seçiniz...":
         df_new['Payment_ID'] = df_copy[config['odeme_ref_col']].apply(referans_no_temizle)
     else:
@@ -187,7 +176,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
 
     df_new['Kaynak'] = taraf_adi
     
-    # Döviz
     doviz_aktif = False
     if config.get('doviz_cinsi_col') and config['doviz_cinsi_col'] != "Seçiniz...":
         df_new['Para_Birimi'] = df_copy[config['doviz_cinsi_col']].astype(str).str.upper().str.strip()
@@ -202,7 +190,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
     else:
         df_new['Doviz_Tutari'] = 0.0
 
-    # Tutar
     if "Tek Kolon" in config['tutar_tipi']:
         col_name = config['tutar_col']
         ham = pd.to_numeric(df_copy[col_name], errors='coerce').fillna(0)
@@ -217,7 +204,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
         df_new['Borc'] = pd.to_numeric(df_copy[config['borc_col']], errors='coerce').fillna(0)
         df_new['Alacak'] = pd.to_numeric(df_copy[config['alacak_col']], errors='coerce').fillna(0)
 
-    # Ödeme Verisi
     df_pay_final = pd.DataFrame()
     if not df_payments.empty:
         df_pay_final = df_new.iloc[0:0].copy()
@@ -276,13 +262,11 @@ def grupla(df, is_doviz_aktif):
             if not nt.empty: return nt['Doviz_Tutari'].max()
             return 0.0
         
-        # FutureWarning FIX: Sadece ilgili kolonları seçip apply uygula
-        df_sub = df_ids[['Match_ID', 'Para_Birimi', 'Doviz_Tutari']]
+        cols_needed = ['Match_ID', 'Para_Birimi', 'Doviz_Tutari']
+        df_sub = df_ids[cols_needed].copy()
         
         df_grp = df_ids.groupby('Match_ID', as_index=False).agg(agg_rules)
         df_grp = df_grp.set_index('Match_ID')
-        
-        # Apply işlemini subset üzerinde yap
         df_grp['Doviz_Tutari'] = df_sub.groupby('Match_ID').apply(get_real_fx)
         df_grp = df_grp.reset_index()
     else:
@@ -295,7 +279,7 @@ def grupla(df, is_doviz_aktif):
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])
-with c_title: st.title("🗂️ Mutabakat Pro V48")
+with c_title: st.title("🗂️ Mutabakat Pro V49")
 with c_settings:
     with st.expander("⚙️ Ayarlar", expanded=True):
         mode_selection = st.radio("Mod:", ["C/H Ekstresi", "Sigorta Poliçesi"])
@@ -315,7 +299,6 @@ with col1:
     ex_biz = [] 
     if f1:
         d1 = pd.read_excel(f1)
-        # MÜKERRER KOLONLARI TEMİZLE
         d1 = d1.loc[:, ~d1.columns.duplicated()]
         cl1 = ["Seçiniz..."] + d1.columns.tolist()
         
@@ -364,7 +347,6 @@ with col2:
     if f2:
         dfs = [pd.read_excel(f) for f in f2]
         d2 = pd.concat(dfs, ignore_index=True)
-        # MÜKERRER KOLONLARI TEMİZLE
         d2 = d2.loc[:, ~d2.columns.duplicated()]
         cl2 = ["Seçiniz..."] + d2.columns.tolist()
         
@@ -411,15 +393,11 @@ with col2:
 
 st.divider()
 
-# ==========================================
-# 4. ANALİZ MOTORU
-# ==========================================
 if st.button("🚀 Başlat", type="primary", use_container_width=True):
     if f1 and f2:
         try:
             start = time.time()
             with st.spinner('İşleniyor...'):
-                # 1. HAZIRLIK
                 raw_biz, pay_biz, dv_biz = veri_hazirla(d1, cf1, "Biz", is_ins, ex_biz)
                 grp_biz = grupla(raw_biz, dv_biz)
                 
@@ -428,12 +406,10 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 
                 doviz_raporda = dv_biz or dv_onlar
                 
-                # ÖZET
                 all_biz = pd.concat([raw_biz, pay_biz])
                 all_onlar = pd.concat([raw_onlar, pay_onlar])
                 df_ozet = ozet_rapor_olustur(all_biz, all_onlar)
                 
-                # EŞLEŞTİRME SÖZLÜKLERİ
                 matched_ids = set()
                 dict_onlar_id = {}
                 dict_onlar_tutar = {}
@@ -453,7 +429,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 eslesen_odeme = []
                 un_biz = []
                 
-                # --- ANA EŞLEŞTİRME ---
                 for idx, row in grp_biz.iterrows():
                     found = False
                     my_amt = abs(row['Borc'] - row['Alacak'])
@@ -475,7 +450,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         return d
 
                     if is_ins:
-                        # SIGORTA MODU: MUTLAK DEĞER
                         key = f"{round(my_amt, 2)}_{row['Para_Birimi']}"
                         if key in dict_onlar_tutar:
                             cands = dict_onlar_tutar[key]
@@ -485,7 +459,8 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                     if pd.notna(row['Tarih']) and row['Tarih'] == c['Tarih']:
                                         best = c; break
                                     if best is None: best = c
-                            if best:
+                            # HATA DÜZELTİLDİ: 'if best' YERİNE 'if best is not None'
+                            if best is not None:
                                 matched_ids.add(best['unique_idx'])
                                 eslesenler.append(make_row("✅ Tam Eşleşme", best, 0.0))
                                 found = True
@@ -501,7 +476,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                         diff = abs(my_amt - t_amt)
                                         if diff < min_diff: min_diff = diff; best = c
                                 
-                                if best:
+                                if best is not None:
                                     matched_ids.add(best['unique_idx'])
                                     diff_real = abs(my_amt) - abs(abs(best['Borc'] - best['Alacak']))
                                     real_dv = 0
@@ -511,7 +486,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                     found = True
 
                     else:
-                        # C/H MODU
                         if not found and row['Match_ID']:
                             if row['Match_ID'] in dict_onlar_id:
                                 cands = dict_onlar_id[row['Match_ID']]
@@ -523,7 +497,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                         diff = abs(my_amt - t_amt)
                                         if diff < min_diff: min_diff = diff; best = c
                                 
-                                if best:
+                                if best is not None:
                                     matched_ids.add(best['unique_idx'])
                                     diff_real = my_amt - abs(best['Borc'] - best['Alacak'])
                                     status = "✅ Tam Eşleşme" if min_diff < 0.1 else "⚠️ Tutar Farkı"
@@ -595,7 +569,7 @@ if st.session_state.get('analiz_yapildi', False):
     
     df_es = res.get("eslesen", pd.DataFrame())
     if not df_es.empty:
-        df_ok = df_es[~df_es['Durum'].str.contains('❌|⚠️', na=False)] if not df_es.empty else pd.DataFrame()
+        df_ok = df_es[~df_es['Durum'].str.contains('❌|⚠️', na=False)]
     else:
         df_ok = pd.DataFrame()
 

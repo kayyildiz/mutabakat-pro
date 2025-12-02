@@ -5,7 +5,7 @@ import io
 import time
 
 # --- ARAYÜZ AYARLARI ---
-st.set_page_config(page_title="Mutabakat Pro, layout="wide")
+st.set_page_config(page_title="Mutabakat Pro V31", layout="wide")
 
 hide_st_style = """
             <style>
@@ -18,7 +18,7 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- SESSION STATE (GÜVENLİ BAŞLATMA) ---
+# --- SESSION STATE (HAFIZA) BAŞLATMA ---
 if 'analiz_yapildi' not in st.session_state:
     st.session_state['analiz_yapildi'] = False
 if 'sonuclar' not in st.session_state:
@@ -90,6 +90,7 @@ def ozet_rapor_olustur(df_biz, df_onlar):
     ozet['Kümüle_Fark'] = ozet['Biz_Bakiye'] + ozet['Onlar_Bakiye']
     
     ozet['Yil_Ay'] = ozet['Yil_Ay'].astype(str)
+    
     cols = ['Para_Birimi', 'Yil_Ay', 'Biz_Borc', 'Biz_Alacak', 'Biz_Bakiye', 
             'Onlar_Borc', 'Onlar_Alacak', 'Onlar_Bakiye', 'Kümüle_Fark']
     return ozet[cols]
@@ -232,7 +233,7 @@ def veri_hazirla_ve_grupla(df, config, taraf_adi, is_insurance_mode=False, extra
 
 # --- ARAYÜZ ---
 
-st.title("🗂️ Mutabakat Pro")
+st.title("🗂️ Mutabakat Pro V31")
 
 col_mode1, col_mode2 = st.columns([1, 3])
 with col_mode1:
@@ -323,7 +324,7 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
     if file1 and files2:
         try:
             start_time = time.time()
-            with st.spinner('Analiz yapılıyor...'):
+            with st.spinner('Veriler işleniyor...'):
                 clean_biz, doviz_biz, orig_biz = veri_hazirla_ve_grupla(df1, config1, "Biz", is_insurance, extra_cols_biz)
                 clean_onlar, doviz_onlar, orig_onlar = veri_hazirla_ve_grupla(df2, config2, "Onlar", is_insurance, extra_cols_onlar)
                 
@@ -394,8 +395,8 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
                             
                             return data
 
+                        # SİGORTA MODU
                         if is_insurance:
-                            # SIGORTA: TARIH+TUTAR ÖNCELİKLİ
                             key = f"{round(aranan_tutar, 2)}_{row['Para_Birimi']}"
                             if key in onlar_dict_tutar:
                                 candidates = onlar_dict_tutar[key]
@@ -420,7 +421,9 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
                                 min_diff_abs = float('inf')
                                 for cand in pool:
                                     diff = abs(cand[aranan_yon] - aranan_tutar)
-                                    if diff < min_diff_abs: min_diff_abs = diff; best_candidate = cand
+                                    if diff < min_diff_abs:
+                                        min_diff_abs = diff
+                                        best_candidate = cand
                                 
                                 if best_candidate is not None:
                                     match_found = True
@@ -543,6 +546,7 @@ if st.button("🚀 Analizi Başlat", type="primary", use_container_width=True):
         except Exception as e:
             st.error(f"Hata: {e}")
 
+# --- SONUC GÖSTERME KISMI (GÜVENLİ) ---
 if st.session_state.get('analiz_yapildi', False):
     res = st.session_state.sonuclar
     
@@ -582,23 +586,31 @@ if st.session_state.get('analiz_yapildi', False):
     with c_down2:
         st.download_button("📥 Excel İndir (Tek Liste/Özet)", excel_indir_tek_sayfa(dfs_to_export), "Mutabakat_Tek_Liste.xlsx", type="primary")
 
-    tab_ozet, tab1, tab5, tab2, tab3, tab4 = st.tabs(["📈 Özet", "✅ Faturalar", "💰 Ödemeler", "⚠️ Hatalılar", "🔴 Bizde Var / Yok", "🔵 Onlarda Var / Yok"])
+    tabs_list = ["📈 Özet", "✅ Faturalar", "⚠️ Hatalılar", "🔴 Bizde Var / Yok", "🔵 Onlarda Var / Yok"]
+    if not is_insurance: tabs_list.insert(2, "💰 Ödemeler")
     
-    with tab_ozet:
+    tabs = st.tabs(tabs_list)
+    
+    with tabs[0]:
         st.dataframe(res["ozet"].style.format(precision=2), use_container_width=True)
-    with tab1:
+    with tabs[1]:
         if not df_eslesen_temiz.empty:
-            st.dataframe(df_eslesen_temiz, use_container_width=True)
+            st.dataframe(df_eslesen_temiz.style.map(lambda v: 'color: green', subset=['Durum']), use_container_width=True)
         else: st.info("Fatura eşleşmesi yok.")
-    with tab5:
-        if not res["odeme"].empty:
-            st.dataframe(res["odeme"], use_container_width=True)
-        else: st.info("Ödeme eşleşmesi yok.")
-    with tab2:
+    
+    if not is_insurance:
+        with tabs[2]:
+            if not res["odeme"].empty:
+                st.dataframe(res["odeme"].style.map(lambda v: 'color: blue', subset=['Durum']), use_container_width=True)
+            else: st.info("Ödeme eşleşmesi yok.")
+        idx_offset = 1
+    else: idx_offset = 0
+        
+    with tabs[2+idx_offset]:
         if not df_hatali.empty:
-            st.dataframe(df_hatali, use_container_width=True)
-        else: st.success("Hata yok.")
-    with tab3:
+            st.dataframe(df_hatali.style.map(lambda v: 'color: red', subset=['Durum']), use_container_width=True)
+        else: st.success("Hatalı kayıt yok.")
+    with tabs[3+idx_offset]:
         st.dataframe(res["un_biz"], use_container_width=True)
-    with tab4:
+    with tabs[4+idx_offset]:
         st.dataframe(res["un_onlar"], use_container_width=True)

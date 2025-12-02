@@ -10,12 +10,15 @@ import os
 # Uyarıları gizle
 warnings.filterwarnings("ignore")
 
-# --- 1. AYARLAR VE JSON HAFIZA YÖNETİMİ ---
-st.set_page_config(page_title="Mutabakat Pro V51", layout="wide")
+# --- 1. AYARLAR ---
+st.set_page_config(page_title="Mutabakat Pro V52", layout="wide")
 
+# Dosya Adı (Hafıza İçin)
 CONFIG_FILE = "ayarlar.json"
 
+# --- HAFIZA FONKSİYONLARI ---
 def ayarlari_yukle():
+    """Ayarları diskten okur. Webde dosya yoksa boş döner."""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -25,20 +28,20 @@ def ayarlari_yukle():
     return {}
 
 def ayarlari_kaydet(yeni_ayarlar):
+    """Ayarları diske yazar. Webde geçici olarak çalışır."""
     mevcut = ayarlari_yukle()
     mevcut.update(yeni_ayarlar)
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(mevcut, f, ensure_ascii=False, indent=4)
     except:
-        pass
+        pass # Yazamazsa (Web izni yoksa) sessizce geç
 
 # Session State Başlatma
 if 'analiz_yapildi' not in st.session_state:
     st.session_state['analiz_yapildi'] = False
 if 'sonuclar' not in st.session_state:
     st.session_state['sonuclar'] = {}
-# Hafızayı diskten yükle
 if 'column_prefs' not in st.session_state:
     st.session_state['column_prefs'] = ayarlari_yukle()
 
@@ -57,7 +60,7 @@ st.markdown(hide_st_style, unsafe_allow_html=True)
 # --- 2. YARDIMCI FONKSİYONLAR ---
 
 def get_smart_index(options, target_name, filename, key_suffix):
-    # 1. Hafıza (Diskten gelen)
+    # 1. Hafıza Kontrolü
     if filename in st.session_state['column_prefs']:
         saved_col = st.session_state['column_prefs'][filename].get(key_suffix)
         if saved_col in options:
@@ -106,29 +109,28 @@ def safe_strftime(val):
     except: return ""
 
 def apply_excel_styles(writer, sheet_name, df):
-    """Excel çıktılarını formatlar ve BOLD yapar."""
+    """Excel çıktılarını BOLD yapar ve genişletir."""
     from openpyxl.styles import Font
-    worksheet = writer.sheets[sheet_name]
-    
-    # Kalın yapılacak kolonlar
-    bold_cols = ['Biz_Bakiye', 'Onlar_Bakiye', 'Kümüle_Fark', 'Durum', 'Fark (TL)']
-    
-    # Header'ı bul
-    header_cells = [cell for cell in worksheet[1]]
-    col_indices = {cell.value: i+1 for i, cell in enumerate(header_cells) if cell.value in bold_cols}
-
-    for column_cells in worksheet.columns:
-        try:
-            # Genişlik Ayarı
-            length = max(len(str(cell.value) if cell.value is not None else "") for cell in column_cells)
-            worksheet.column_dimensions[column_cells[0].column_letter].width = min(length + 5, 50)
+    try:
+        worksheet = writer.sheets[sheet_name]
+        bold_cols = ['Biz_Bakiye', 'Onlar_Bakiye', 'Kümüle_Fark', 'Durum', 'Fark (TL)']
+        
+        # Başlık satırını bul ve kolon indekslerini al
+        header = [cell.value for cell in worksheet[1]]
+        
+        for col_idx, col_name in enumerate(header, 1): # 1-based index
+            # Genişlik
+            column_letter = worksheet.cell(row=1, column=col_idx).column_letter
+            worksheet.column_dimensions[column_letter].width = 20 
             
-            # Bold Ayarı (Veriler İçin)
-            col_name = column_cells[0].value
+            # Bold Yapma
             if col_name in bold_cols:
-                for cell in column_cells[1:]: # Başlık hariç
-                    cell.font = Font(bold=True)
-        except: pass
+                col_letter = worksheet.cell(row=1, column=col_idx).column_letter
+                for cell in worksheet[col_letter]:
+                    # Sadece veri satırlarını bold yap (Başlık zaten bold gelir genelde)
+                    if cell.row > 1: 
+                        cell.font = Font(bold=True)
+    except: pass
 
 def excel_indir_coklu(dfs_dict):
     output = io.BytesIO()
@@ -201,7 +203,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
     else:
         df_new['Tarih_Odeme'] = df_new['Tarih']
 
-    # Match ID
     if is_insurance_mode and taraf_adi == "Onlar":
         pol = config.get('police_col')
         zey = config.get('zeyil_col')
@@ -230,7 +231,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
 
     df_new['Kaynak'] = taraf_adi
     
-    # Döviz
     doviz_aktif = False
     if config.get('doviz_cinsi_col') and config['doviz_cinsi_col'] != "Seçiniz...":
         df_new['Para_Birimi'] = df_copy[config['doviz_cinsi_col']].astype(str).str.upper().str.strip()
@@ -245,7 +245,6 @@ def veri_hazirla(df, config, taraf_adi, is_insurance_mode=False, extra_cols=[]):
     else:
         df_new['Doviz_Tutari'] = 0.0
 
-    # Tutar
     if "Tek Kolon" in config['tutar_tipi']:
         col_name = config['tutar_col']
         ham = pd.to_numeric(df_copy[col_name], errors='coerce').fillna(0)
@@ -335,7 +334,7 @@ def grupla(df, is_doviz_aktif):
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])
-with c_title: st.title("💎 Mutabakat Pro V51")
+with c_title: st.title("💎 Mutabakat Pro V52")
 with c_settings:
     with st.expander("⚙️ Ayarlar", expanded=True):
         c_s1, c_s2 = st.columns(2)
@@ -473,7 +472,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 if k in ['tarih_col', 'belge_col', 'tutar_col', 'borc_col', 'alacak_col', 'doviz_cinsi_col', 'doviz_tutar_col', 'tarih_odeme_col', 'odeme_ref_col', 'odeme_turu_sutunu']:
                     if v and v != "Seçiniz...": prefs[k] = v
             st.session_state['column_prefs'][f1.name] = prefs
-            # Dosyaya da yaz
             ayarlari_kaydet({f1.name: prefs})
             
         f_name_right = "merged_files" if len(f2) > 1 else f2[0].name
@@ -497,12 +495,12 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 
                 doviz_raporda = dv_biz or dv_onlar
                 
-                # ÖZET
+                # ÖZET (HAM VERİDEN)
                 all_biz = pd.concat([raw_biz, pay_biz])
                 all_onlar = pd.concat([raw_onlar, pay_onlar])
                 df_ozet = ozet_rapor_olustur(all_biz, all_onlar)
                 
-                # SÖZLÜKLER
+                # EŞLEŞTİRME
                 matched_ids = set()
                 dict_onlar_id = {}
                 dict_onlar_tutar = {}
@@ -522,7 +520,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 eslesen_odeme = []
                 un_biz = []
                 
-                # EŞLEŞTİRME
                 for idx, row in grp_biz.iterrows():
                     found = False
                     my_amt = abs(row['Borc'] - row['Alacak'])
@@ -544,7 +541,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         return d
 
                     if is_ins:
-                        # SİGORTA MODU
+                        # SİGORTA
                         key = f"{round(my_amt, 2)}_{row['Para_Birimi']}"
                         if key in dict_onlar_tutar:
                             cands = dict_onlar_tutar[key]
@@ -579,7 +576,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                     eslesenler.append(make_row(status, best, diff_real, real_dv))
                                     found = True
                     else:
-                        # C/H MODU
+                        # C/H
                         if not found and row['Match_ID']:
                             if row['Match_ID'] in dict_onlar_id:
                                 cands = dict_onlar_id[row['Match_ID']]
@@ -617,7 +614,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         for c in ex_onlar: d_un[f"KARŞI: {c}"] = str(row.get(c, ""))
                         un_onlar.append(d_un)
 
-                # ÖDEME EŞLEŞTİRME
+                # ÖDEME
                 if not pay_biz.empty and not pay_onlar.empty:
                     dict_pay = {}
                     used_pay = set()
@@ -655,22 +652,18 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
         except Exception as e:
             st.error(f"Hata: {e}")
 
-# --- SONUÇ EKRANI ---
+# --- 5. SONUÇ EKRANI ---
 if st.session_state.get('analiz_yapildi', False):
     res = st.session_state['sonuclar']
     
     df_es = res.get("eslesen", pd.DataFrame())
-    
-    # Hatalıları Ayır (C/H Modu İçin 1 TL Kuralı)
     df_ok = pd.DataFrame()
     df_err = pd.DataFrame()
     
     if not df_es.empty:
         if is_ins:
-            # Sigorta: Hatalı Yok (Mutlak eşleşme)
-            df_ok = df_es
+            df_ok = df_es[~df_es['Durum'].str.contains('❌|⚠️', na=False)]
         else:
-            # C/H: 1 TL Kontrolü
             if 'Fark (TL)' in df_es.columns:
                 df_ok = df_es[abs(df_es['Fark (TL)']) <= 1.0]
                 df_err = df_es[abs(df_es['Fark (TL)']) > 1.0]
@@ -683,6 +676,7 @@ if st.session_state.get('analiz_yapildi', False):
         "Bizde Var - Yok": res.get("un_biz", pd.DataFrame()),
         "Onlarda Var - Yok": res.get("un_onlar", pd.DataFrame())
     }
+    
     if not is_ins: 
         dfs_exp["Eşleşen Ödemeler"] = res.get("odeme", pd.DataFrame())
         dfs_exp["Hatalı Farklar"] = df_err
@@ -704,15 +698,12 @@ if st.session_state.get('analiz_yapildi', False):
     
     tabs = st.tabs(t_heads)
     
-    # Pandas Styler ile Bold
     def highlight_cols(x):
         return ['font-weight: bold' if col in ['Biz_Bakiye', 'Onlar_Bakiye', 'Kümüle_Fark'] else '' for col in x.index]
     
     with tabs[0]: 
-        try:
-            st.dataframe(res.get("ozet", pd.DataFrame()).style.apply(highlight_cols, axis=1).format(precision=2), use_container_width=True)
-        except:
-            st.dataframe(res.get("ozet", pd.DataFrame()), use_container_width=True)
+        try: st.dataframe(res.get("ozet", pd.DataFrame()).style.apply(highlight_cols, axis=1).format(precision=2), use_container_width=True)
+        except: st.dataframe(res.get("ozet", pd.DataFrame()), use_container_width=True)
             
     with tabs[1]: st.dataframe(df_ok, use_container_width=True)
     

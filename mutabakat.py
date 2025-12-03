@@ -11,7 +11,7 @@ import os
 warnings.filterwarnings("ignore")
 
 # --- 1. AYARLAR VE GÜVENLİK ---
-st.set_page_config(page_title="Mutabakat Pro", layout="wide")
+st.set_page_config(page_title="Mutabakat Pro - Hilmi", layout="wide")
 
 if 'analiz_yapildi' not in st.session_state:
     st.session_state['analiz_yapildi'] = False
@@ -740,5 +740,6 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 

@@ -498,31 +498,32 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 # --- ANA EŞLEŞTİRME ---
                 for idx, row in grp_biz.iterrows():
                     found = False
-                    my_amt = row['Borc'] - row['Alacak']  # Net Bakiye
-                    
+                    my_amt = row['Borc'] - row['Alacak']  # Net Bakiye (Biz)
+
                     if row['Match_ID'] and row['Match_ID'] in dict_onlar_id:
                         cands = dict_onlar_id[row['Match_ID']]
                         best = None
                         min_diff = float('inf')
-                        
-                        # Aynı Match_ID içinden en iyi adayı seç
+
+                        # Aynı Match_ID için en uygun adayı bul (net bakiye açısından)
                         for c in cands:
                             if c['unique_idx'] not in matched_ids:
                                 their_amt_net = c['Borc'] - c['Alacak']
-                                diff = abs(my_amt + their_amt_net)
+                                diff = abs(my_amt + their_amt_net)  # zıt yön kontrolü
                                 if diff < min_diff:
                                     min_diff = diff
                                     best = c
-                        
+
                         if best is not None:
                             matched_ids.add(best['unique_idx'])
 
-                            # Varsayılan: grup neti
+                            # Varsayılan: gruplanmış satır
                             display_onlar = best
                             their_amt_display = best['Borc'] - best['Alacak']
 
                             mid = row['Match_ID']
-                            # Aynı Match_ID için ham satırlardan pozitif yönlü olanı bul
+
+                            # Aynı Match_ID için ham karşı taraf satırlarında pozitif yönlü olanı seç
                             if mid and mid in dict_onlar_raw:
                                 adaylar = dict_onlar_raw[mid]
                                 pozitifler = [
@@ -538,14 +539,20 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                         display_onlar['Borc'] - display_onlar['Alacak']
                                     )
 
-                            # 🔴 FARK VE DURUM ARTIK EKRENDAKİ TUTARLARA GÖRE
+                            # Fark (TL) = ekranda görünen iki tutarın toplamı
                             real_diff = my_amt + their_amt_display
                             status = "✅ Tam Eşleşme" if abs(real_diff) < 1.0 else "❌ Tutar Farkı"
 
-                            # Döviz farkı da ekranda gösterdiğimiz satıra göre
-                            real_dv_diff = 0
+                            # --- DÖVİZ HESAPLAMA (SADECE TRY/TL DIŞI) ---
+                            dv_biz_val = 0.0
+                            dv_onlar_val = 0.0
                             if doviz_raporda:
-                                real_dv_diff = row['Doviz_Tutari'] - display_onlar['Doviz_Tutari']
+                                # Bizim döviz
+                                if row['Para_Birimi'] not in ['TRY', 'TL']:
+                                    dv_biz_val = float(row.get('Doviz_Tutari', 0) or 0)
+                                # Karşı taraf döviz
+                                if display_onlar['Para_Birimi'] not in ['TRY', 'TL']:
+                                    dv_onlar_val = float(display_onlar.get('Doviz_Tutari', 0) or 0)
 
                             d = {
                                 "Durum": status,
@@ -556,20 +563,23 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                 "Tutar (Onlar)": their_amt_display,
                                 "Fark (TL)": real_diff,
                             }
+
                             if doviz_raporda:
                                 d["PB"] = row['Para_Birimi']
-                                d["Döviz (Biz)"] = row['Doviz_Tutari']
-                                d["Döviz (Onlar)"] = display_onlar['Doviz_Tutari']
-                                d["Fark (Döviz)"] = real_dv_diff
-                                
+                                d["Döviz (Biz)"] = dv_biz_val
+                                d["Döviz (Onlar)"] = dv_onlar_val
+                                d["Fark (Döviz)"] = dv_biz_val - dv_onlar_val
+
+                            # Ekstra kolonlar
                             for c in ex_biz:
                                 d[f"BİZ: {c}"] = str(row.get(c, ""))
                             for c in ex_onlar:
                                 d[f"KARŞI: {c}"] = str(display_onlar.get(c, ""))
-                            
+
                             eslesenler.append(d)
                             found = True
-    
+
+                    # Hiç eşleşme bulunamazsa: Bizde Var
                     if not found:
                         d_un = {
                             "Durum": "🔴 Bizde Var",
@@ -580,6 +590,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         for c in ex_biz:
                             d_un[f"BİZ: {c}"] = str(row.get(c, ""))
                         un_biz.append(d_un)
+
 
                 # --- KARŞI TARAFTA KALAN BELGELER ---
                 un_onlar = []
@@ -735,6 +746,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

@@ -495,8 +495,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 eslesenler = []
                 eslesen_odeme = []
                 un_biz = []
-                
-                # --- ANA EŞLEŞTİRME ---
+                                # --- ANA EŞLEŞTİRME ---
                 for idx, row in grp_biz.iterrows():
                     found = False
                     my_amt = row['Borc'] - row['Alacak']  # Net Bakiye
@@ -506,10 +505,10 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         best = None
                         min_diff = float('inf')
                         
+                        # En iyi adayı (aynı Match_ID içinden) seç
                         for c in cands:
                             if c['unique_idx'] not in matched_ids:
                                 their_amt_net = c['Borc'] - c['Alacak']
-                                # Yönlü fark: Biz + Onlar (zıt işaret tercih)
                                 diff = abs(my_amt + their_amt_net)
                                 if diff < min_diff:
                                     min_diff = diff
@@ -518,24 +517,20 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         if best is not None:
                             matched_ids.add(best['unique_idx'])
 
-                            # NET TUTAR (Fark hesabı için)
+                            # Varsayılan: grup neti
                             their_amt_net = best['Borc'] - best['Alacak']
-                            real_diff = my_amt + their_amt_net
-
-                            # --- TUTAR (ONLAR) İÇİN POZİTİF SATIRI SEÇ ---
                             display_onlar = best
                             their_amt_display = their_amt_net
-                            mid = row['Match_ID']
 
+                            mid = row['Match_ID']
+                            # Aynı Match_ID için ham satırlardan pozitif yönlü olanı bul
                             if mid and mid in dict_onlar_raw:
                                 adaylar = dict_onlar_raw[mid]
-                                # Borç - Alacak > 0 olan (pozitif yönlü) satırlar
                                 pozitifler = [
                                     r for r in adaylar
                                     if (r['Borc'] - r['Alacak']) > 0
                                 ]
                                 if pozitifler:
-                                    # En büyük pozitif tutarı seç
                                     display_onlar = max(
                                         pozitifler,
                                         key=lambda r: (r['Borc'] - r['Alacak'])
@@ -544,20 +539,22 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                         display_onlar['Borc'] - display_onlar['Alacak']
                                     )
 
-                            # Döviz farkı (net bazda)
+                            # 🔴 ÖNEMLİ DEĞİŞİKLİK:
+                            # Fark ve Durum artık görüntülenen tutar üzerinden hesaplanıyor
+                            real_diff = my_amt + their_amt_display
+                            status = "✅ Tam Eşleşme" if abs(real_diff) < 1.0 else "❌ Tutar Farkı"
+
+                            # Döviz farkı da görüntülenen satıra göre
                             real_dv_diff = 0
                             if doviz_raporda:
-                                real_dv_diff = row['Doviz_Tutari'] - best['Doviz_Tutari']
+                                real_dv_diff = row['Doviz_Tutari'] - display_onlar['Doviz_Tutari']
 
-                            status = "✅ Tam Eşleşme" if min_diff < 1.0 else "❌ Tutar Farkı"
-                            
                             d = {
                                 "Durum": status,
                                 "Belge No": row['Orijinal_Belge_No'],
                                 "Tarih (Biz)": safe_strftime(row['Tarih']),
                                 "Tarih (Onlar)": safe_strftime(display_onlar['Tarih']),
                                 "Tutar (Biz)": my_amt,
-                                # BURADA ARTIK POZİTİF SATIRI YAZIYORUZ
                                 "Tutar (Onlar)": their_amt_display,
                                 "Fark (TL)": real_diff,
                             }
@@ -574,7 +571,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             
                             eslesenler.append(d)
                             found = True
-                    
+    
                     if not found:
                         d_un = {
                             "Durum": "🔴 Bizde Var",
@@ -740,6 +737,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

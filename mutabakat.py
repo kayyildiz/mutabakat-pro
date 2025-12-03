@@ -11,7 +11,7 @@ import os
 warnings.filterwarnings("ignore")
 
 # --- 1. AYARLAR VE GÜVENLİK ---
-st.set_page_config(page_title="Mutabakat Pro V65", layout="wide")
+st.set_page_config(page_title="Mutabakat Pro", layout="wide")
 
 if 'analiz_yapildi' not in st.session_state:
     st.session_state['analiz_yapildi'] = False
@@ -335,7 +335,7 @@ def grupla(df, is_doviz_aktif):
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])
 with c_title:
-    st.title("🗂️ Mutabakat Pro V65")
+    st.title("Mutabakat Pro")
 with c_settings:
     rol_secimi = st.radio("Ticari Rolümüz:", ["Biz Alıcıyız", "Biz Satıcıyız"], horizontal=True)
 
@@ -710,3 +710,4 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+

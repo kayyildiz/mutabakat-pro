@@ -522,10 +522,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                      mid = str(row.get('Match_ID', '')).strip()
                      if mid:
                          dict_onlar_id_mid.setdefault(mid, []).append(row)
-
-                     raw_key = str(row.get('Orijinal_Belge_No', '')).strip().upper().replace(' ', '')
-                     if raw_key:
-                         dict_onlar_id_raw.setdefault(raw_key, []).append(row)
                 eslesenler = []
                 eslesen_odeme = []
                 un_biz = []
@@ -809,6 +805,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

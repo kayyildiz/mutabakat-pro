@@ -491,10 +491,10 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                     mid = row['Match_ID']
                     if mid:
                         dict_onlar_id.setdefault(mid, []).append(row)
-
                 eslesenler = []
                 eslesen_odeme = []
                 un_biz = []
+
                 # --- ANA EŞLEŞTİRME ---
                 for idx, row in grp_biz.iterrows():
                     found = False
@@ -547,10 +547,8 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             dv_biz_val = 0.0
                             dv_onlar_val = 0.0
                             if doviz_raporda:
-                                # Bizim döviz
                                 if row['Para_Birimi'] not in ['TRY', 'TL']:
                                     dv_biz_val = float(row.get('Doviz_Tutari', 0) or 0)
-                                # Karşı taraf döviz
                                 if display_onlar['Para_Birimi'] not in ['TRY', 'TL']:
                                     dv_onlar_val = float(display_onlar.get('Doviz_Tutari', 0) or 0)
 
@@ -570,7 +568,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                 d["Döviz (Onlar)"] = dv_onlar_val
                                 d["Fark (Döviz)"] = dv_biz_val - dv_onlar_val
 
-                            # Ekstra kolonlar
                             for c in ex_biz:
                                 d[f"BİZ: {c}"] = str(row.get(c, ""))
                             for c in ex_onlar:
@@ -579,7 +576,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             eslesenler.append(d)
                             found = True
 
-                    # Hiç eşleşme bulunamazsa: Bizde Var
                     if not found:
                         d_un = {
                             "Durum": "🔴 Bizde Var",
@@ -590,7 +586,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         for c in ex_biz:
                             d_un[f"BİZ: {c}"] = str(row.get(c, ""))
                         un_biz.append(d_un)
-
 
                 # --- KARŞI TARAFTA KALAN BELGELER ---
                 un_onlar = []
@@ -606,11 +601,9 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         for c in ex_onlar:
                             d_un[f"KARŞI: {c}"] = str(row.get(c, ""))
                         un_onlar.append(d_un)
-                # --- YENİ ÖDEME EŞLEŞTİRME (REF → TARİH → TUTAR/YÖN) ---
-                eslesen_odeme = eslesen_odeme  # yukarıda tanımlı list zaten var
 
+                # --- YENİ ÖDEME EŞLEŞTİRME (REF → TARİH → TUTAR/YÖN) ---
                 if not pay_biz.empty and not pay_onlar.empty:
-                    # Karşı taraf ödemelerini Payment_ID'ye göre grupla
                     pay_onlar_ref = {}
                     used_onlar = set()
 
@@ -619,12 +612,10 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         if pid:
                             pay_onlar_ref.setdefault(pid, []).append((idx, row_p))
 
-                    # Bizim her ödeme için karşı tarafta eş arıyoruz
                     for idx, row_p in pay_biz.iterrows():
                         pid = row_p.get("Payment_ID", "")
                         biz_net = row_p["Borc"] - row_p["Alacak"]
 
-                        # Payment_ID yoksa veya karşıda yoksa: Bizde Var (Ödeme)
                         if not pid or pid not in pay_onlar_ref:
                             d_un = {
                                 "Durum": "🔴 Bizde Var (Ödeme)",
@@ -638,7 +629,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             un_biz.append(d_un)
                             continue
 
-                        # Aynı Payment_ID'ye sahip, henüz kullanılmamış ilk satırı seç
                         aday_idx = None
                         aday_row = None
                         for j, r_onlar in pay_onlar_ref[pid]:
@@ -648,7 +638,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                 break
 
                         if aday_idx is None:
-                            # Hepsi kullanılmış, bu da Bizde Var (Ödeme)
                             d_un = {
                                 "Durum": "🔴 Bizde Var (Ödeme)",
                                 "Ödeme Ref": pid,
@@ -664,10 +653,8 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         used_onlar.add(aday_idx)
                         onlar_net = aday_row["Borc"] - aday_row["Alacak"]
 
-                        # 1) Ref zaten eşit (aynı pid grubundayız)
                         ref_ok = True
 
-                        # 2) Valör Tarihi eşit mi?
                         t_biz = row_p.get("Tarih_Odeme", row_p["Tarih"])
                         t_onlar = aday_row.get("Tarih_Odeme", aday_row["Tarih"])
                         date_ok = False
@@ -675,20 +662,16 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             try:
                                 date_ok = t_biz.date() == t_onlar.date()
                             except AttributeError:
-                                # datetime değilse bile, formatlanmış string düzeyinde kontrol edelim
                                 date_ok = safe_strftime(t_biz) == safe_strftime(t_onlar)
 
-                        # 3) Tutar ve yön kontrolü
                         amt_ok = False
                         if rol_kodu == "Biz Alıcıyız":
-                            # Biz +, Onlar - ve büyüklükleri aynı olmalı
                             if biz_net > 0 and onlar_net < 0 and abs(biz_net + onlar_net) < 0.01:
                                 amt_ok = True
                         else:  # Biz Satıcıyız
                             if biz_net < 0 and onlar_net > 0 and abs(biz_net + onlar_net) < 0.01:
                                 amt_ok = True
 
-                        # DURUM sahası
                         if ref_ok and date_ok and amt_ok:
                             durum_txt = "✅ Tam Eşleşti"
                         elif ref_ok and date_ok:
@@ -731,6 +714,19 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                 d_un[f"KARŞI: {c}"] = str(row_p.get(c, ""))
                             un_onlar.append(d_un)
 
+                # --- SONUÇLARI SESSION'A YAZ ---
+                st.session_state['sonuclar'] = {
+                    "ozet": df_ozet,
+                    "eslesen": pd.DataFrame(eslesenler),
+                    "odeme": pd.DataFrame(eslesen_odeme),
+                    "un_biz": pd.DataFrame(un_biz),
+                    "un_onlar": pd.DataFrame(un_onlar)
+                }
+                st.session_state['analiz_yapildi'] = True
+                st.success(f"Bitti! Süre: {time.time() - start:.2f} sn")
+
+        except Exception as e:
+            st.error(f"Hata: {e}")
 
 # --- 5. SONUÇ EKRANI ---
 if st.session_state.get('analiz_yapildi', False):
@@ -778,6 +774,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

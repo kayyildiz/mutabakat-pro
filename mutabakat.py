@@ -412,7 +412,10 @@ with col1:
 with col2:
     st.subheader("🏭 Karşı Taraf")
     f2 = st.file_uploader("Dosya", type=["xlsx", "xls"], accept_multiple_files=True, key="f2")
-    cf2 = {'rol_kodu': rol_kodu}
+    # Biz alıcıysak karşı taraf satıcı, biz satıcıysak karşı taraf alıcı gibi davranacak
+    cf2 = {
+        'rol_kodu': "Biz Satıcıyız" if rol_kodu == "Biz Alıcıyız" else "Biz Alıcıyız"
+    }
     ex_onlar = []
     if f2:
         dfs = [pd.read_excel(f) for f in f2]
@@ -640,7 +643,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
 
                         if not pid or pid not in pay_onlar_ref:
                             d_un = {
-                                "Durum": "🔴 Bizde Var (Ödeme)",
+                                "Durum": "🔴 Bizde Var/Onlarda Yok",
                                 "Ödeme Ref": pid,
                                 "Tarih": safe_strftime(row_p.get("Tarih_Odeme", row_p["Tarih"])),
                                 "Tutar": biz_net,
@@ -661,7 +664,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
 
                         if aday_idx is None:
                             d_un = {
-                                "Durum": "🔴 Bizde Var (Ödeme)",
+                                "Durum": "🔴 Bizde Var/Onlarda Yok",
                                 "Ödeme Ref": pid,
                                 "Tarih": safe_strftime(row_p.get("Tarih_Odeme", row_p["Tarih"])),
                                 "Tutar": biz_net,
@@ -726,7 +729,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         if idx not in used_onlar:
                             onlar_net = row_p["Borc"] - row_p["Alacak"]
                             d_un = {
-                                "Durum": "🔵 Onlarda Var (Ödeme)",
+                                "Durum": "🔵 Onlarda Var/Bizde Yok",
                                 "Ödeme Ref": row_p.get("Payment_ID", ""),
                                 "Tarih": safe_strftime(row_p.get("Tarih_Odeme", row_p["Tarih"])),
                                 "Tutar": onlar_net,
@@ -796,6 +799,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

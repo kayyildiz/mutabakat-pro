@@ -495,7 +495,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 eslesenler = []
                 eslesen_odeme = []
                 un_biz = []
-                                # --- ANA EŞLEŞTİRME ---
+                # --- ANA EŞLEŞTİRME ---
                 for idx, row in grp_biz.iterrows():
                     found = False
                     my_amt = row['Borc'] - row['Alacak']  # Net Bakiye
@@ -505,7 +505,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         best = None
                         min_diff = float('inf')
                         
-                        # En iyi adayı (aynı Match_ID içinden) seç
+                        # Aynı Match_ID içinden en iyi adayı seç
                         for c in cands:
                             if c['unique_idx'] not in matched_ids:
                                 their_amt_net = c['Borc'] - c['Alacak']
@@ -518,9 +518,8 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             matched_ids.add(best['unique_idx'])
 
                             # Varsayılan: grup neti
-                            their_amt_net = best['Borc'] - best['Alacak']
                             display_onlar = best
-                            their_amt_display = their_amt_net
+                            their_amt_display = best['Borc'] - best['Alacak']
 
                             mid = row['Match_ID']
                             # Aynı Match_ID için ham satırlardan pozitif yönlü olanı bul
@@ -539,12 +538,11 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                                         display_onlar['Borc'] - display_onlar['Alacak']
                                     )
 
-                            # 🔴 ÖNEMLİ DEĞİŞİKLİK:
-                            # Fark ve Durum artık görüntülenen tutar üzerinden hesaplanıyor
+                            # 🔴 FARK VE DURUM ARTIK EKRENDAKİ TUTARLARA GÖRE
                             real_diff = my_amt + their_amt_display
                             status = "✅ Tam Eşleşme" if abs(real_diff) < 1.0 else "❌ Tutar Farkı"
 
-                            # Döviz farkı da görüntülenen satıra göre
+                            # Döviz farkı da ekranda gösterdiğimiz satıra göre
                             real_dv_diff = 0
                             if doviz_raporda:
                                 real_dv_diff = row['Doviz_Tutari'] - display_onlar['Doviz_Tutari']
@@ -737,6 +735,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

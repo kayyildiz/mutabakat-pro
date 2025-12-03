@@ -500,22 +500,32 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 all_biz = pd.concat([raw_biz, pay_biz]) if not pay_biz.empty else raw_biz
                 all_onlar = pd.concat([raw_onlar, pay_onlar]) if not pay_onlar.empty else raw_onlar
                 df_ozet = ozet_rapor_olustur(all_biz, all_onlar)
-                
-                # --- KARŞI TARAF HAM SATIR SÖZLÜĞÜ (Match_ID -> satırlar) ---
-                dict_onlar_raw = {}
-                for idx, r in raw_onlar.iterrows():
-                    mid = r['Match_ID']
-                    if mid:
-                        dict_onlar_raw.setdefault(mid, []).append(r)
+                # --- KARŞI TARAF HAM SATIR SÖZLÜKLERİ ---
+                dict_onlar_raw_mid = {}   # Match_ID -> ham satırlar
+                dict_onlar_raw_raw = {}   # Orijinal_Belge_No (normalize) -> ham satırlar
 
-                # --- EŞLEŞTİRME SÖZLÜKLERİ (GRUPLANMIŞ) ---
-                matched_ids = set()
-                dict_onlar_id = {}
-                
-                for idx, row in grp_onlar.iterrows():
-                    mid = row['Match_ID']
+                for idx, r in raw_onlar.iterrows():
+                    mid = str(r.get('Match_ID', '')).strip()
                     if mid:
-                        dict_onlar_id.setdefault(mid, []).append(row)
+                         dict_onlar_raw_mid.setdefault(mid, []).append(r)
+
+                    raw_key = str(r.get('Orijinal_Belge_No', '')).strip().upper().replace(' ', '')
+                    if raw_key:
+                         dict_onlar_raw_raw.setdefault(raw_key, []).append(r)
+
+                 # --- EŞLEŞTİRME SÖZLÜKLERİ (GRUPLANMIŞ) ---
+                 matched_ids = set()
+                 dict_onlar_id_mid = {}    # Match_ID -> gruplanmış satırlar
+                 dict_onlar_id_raw = {}    # Orijinal_Belge_No (normalize) -> gruplanmış satırlar
+
+                 for idx, row in grp_onlar.iterrows():
+                     mid = str(row.get('Match_ID', '')).strip()
+                     if mid:
+                         dict_onlar_id_mid.setdefault(mid, []).append(row)
+
+                     raw_key = str(row.get('Orijinal_Belge_No', '')).strip().upper().replace(' ', '')
+                     if raw_key:
+                         dict_onlar_id_raw.setdefault(raw_key, []).append(row)
                 eslesenler = []
                 eslesen_odeme = []
                 un_biz = []
@@ -799,6 +809,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

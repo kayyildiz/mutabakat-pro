@@ -87,15 +87,29 @@ def belge_no_temizle(val):
 
 @st.cache_data
 def referans_no_temizle(val):
+    # Seri / liste geldiyse ilk elemanı al
     if isinstance(val, (pd.Series, list, tuple)):
         val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
+
     if pd.isna(val):
         return ""
+
+    # Excel'den gelen float referansları düzgün al
     if isinstance(val, float):
-        val = f"{val:.0f}"
-    s = str(val).strip().upper()
-    s = re.sub(r'[^A-Z0-9]', '', s)
+        s = f"{val:.0f}"
+    else:
+        s = str(val)
+
+    # Sadece rakamları bırak
+    s = re.sub(r'\D', '', s)
+
+    # Baştaki 0'ları temizle
     s = s.lstrip('0')
+
+    # Çok kısa olanları yok say
+    if len(s) < 3:
+        return ""
+
     return s
 
 def safe_strftime(val):
@@ -187,7 +201,15 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
         mask_payment = df_copy[filter_col].isin(filter_vals)
         df_payments = df_copy[mask_payment].copy()
         df_copy = df_copy[~mask_payment]
-    
+
+    # Eğer yukarıdaki filtre ile ödeme ayrışmadıysa,
+    # Ödeme Ref / Dekont No kolonu dolu olan satırları "ödeme" kabul et
+    if df_payments.empty and config.get('odeme_ref_col') and config['odeme_ref_col'] != "Seçiniz..." \
+       and config['odeme_ref_col'] in df_copy.columns:
+        mask_payment = df_copy[config['odeme_ref_col']].astype(str).str.strip() != ""
+        df_payments = df_copy[mask_payment].copy()
+        df_copy = df_copy[~mask_payment]
+
     df_new = pd.DataFrame()
     for col in extra_cols:
         if col in df_copy.columns:
@@ -774,6 +796,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

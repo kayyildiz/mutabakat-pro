@@ -493,7 +493,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 
                 raw_onlar, pay_onlar, dv_onlar = veri_hazirla(d2, cf2, "Onlar", ex_onlar)
                 grp_onlar = grupla(raw_onlar, dv_onlar)
-                                doviz_raporda = dv_biz or dv_onlar
+                doviz_raporda = dv_biz or dv_onlar
 
                 # ÖZET
                 all_biz = pd.concat([raw_biz, pay_biz]) if not pay_biz.empty else raw_biz
@@ -828,6 +828,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

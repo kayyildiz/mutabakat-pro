@@ -484,15 +484,17 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
             st.session_state['column_prefs'][f_name_right] = prefs
             ayarlari_kaydet({f_name_right: prefs})
 
-        try:
+        try:            
             start = time.time()
-            with st.spinner('İşleniyor...'):
+            with st.spinner("İşleniyor..."):
                 # 1. HAZIRLIK – 4 argüman (df, config, taraf, extra_cols)
                 raw_biz, pay_biz, dv_biz = veri_hazirla(d1, cf1, "Biz", ex_biz)
                 grp_biz = grupla(raw_biz, dv_biz)
-                
+
                 raw_onlar, pay_onlar, dv_onlar = veri_hazirla(d2, cf2, "Onlar", ex_onlar)
                 grp_onlar = grupla(raw_onlar, dv_onlar)
+
+                # Her iki tarafta döviz kullanımı var mı?
                 doviz_raporda = dv_biz or dv_onlar
 
                 # ÖZET
@@ -501,11 +503,11 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 df_ozet = ozet_rapor_olustur(all_biz, all_onlar)
 
                 # --- KARŞI TARAF HAM SATIR SÖZLÜKLERİ ---
-                # Match_ID ve normalize Belge No'ya göre iki ayrı sözlük
-                dict_onlar_raw_mid = {}   # Match_ID -> ham satırlar
-                dict_onlar_raw_raw = {}   # Normalized Orijinal_Belge_No -> ham satırlar
+                # Match_ID ve normalleştirilmiş Orijinal_Belge_No üzerinden ayrı ayrı sözlükler
+                dict_onlar_raw_mid = {}
+                dict_onlar_raw_raw = {}
 
-                for idx, r in raw_onlar.iterrows():
+                for _, r in raw_onlar.iterrows():
                     mid = str(r.get("Match_ID", "")).strip()
                     if mid:
                         dict_onlar_raw_mid.setdefault(mid, []).append(r)
@@ -516,54 +518,50 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
 
                 # --- EŞLEŞTİRME SÖZLÜKLERİ (GRUPLANMIŞ) ---
                 matched_ids = set()
+
                 dict_onlar_id_mid = {}   # Match_ID -> gruplanmış satırlar
-                dict_onlar_id_raw = {}   # Normalized Orijinal_Belge_No -> gruplanmış satırlar
+                dict_onlar_id_raw = {}   # normalized Orijinal_Belge_No -> gruplanmış satırlar
 
-                for idx, row in grp_onlar.iterrows():
-                    mid = str(row.get("Match_ID", "")).strip()
+                for _, row_on in grp_onlar.iterrows():
+                    mid = str(row_on.get("Match_ID", "")).strip()
                     if mid:
-                        dict_onlar_id_mid.setdefault(mid, []).append(row)
+                        dict_onlar_id_mid.setdefault(mid, []).append(row_on)
 
-                    raw_key = str(row.get("Orijinal_Belge_No", "")).strip().upper().replace(" ", "")
+                    raw_key = str(row_on.get("Orijinal_Belge_No", "")).strip().upper().replace(" ", "")
                     if raw_key:
-                        dict_onlar_id_raw.setdefault(raw_key, []).append(row)
+                        dict_onlar_id_raw.setdefault(raw_key, []).append(row_on)
 
                 eslesenler = []
                 eslesen_odeme = []
                 un_biz = []
 
-                # --- ANA EŞLEŞTİRME (ÖNCE Match_ID, SONRA Belge No FALLBACK) ---
-                for idx, row in grp_biz.iterrows():
+                # --- ANA EŞLEŞTİRME (BELGE NO / Match_ID) ---
+                for _, row in grp_biz.iterrows():
                     found = False
                     my_amt = row["Borc"] - row["Alacak"]  # Net Bakiye (Biz)
 
-                    my_mid = str(row.get("Match_ID", "")).strip()
-                    my_raw_key = str(row.get("Orijinal_Belge_No", "")).strip().upper().replace(" ", "")
+                    key_mid = str(row.get("Match_ID", "")).strip()
+                    key_raw = str(row.get("Orijinal_Belge_No", "")).strip().upper().replace(" ", "")
 
-                    # 1) Match_ID ile aday bul
+                    # Önce Match_ID, sonra normalleştirilmiş Belge No ile adayları topla
                     cands = []
-                    ham_sözlük = None
-                    if my_mid and my_mid in dict_onlar_id_mid:
-                        cands = dict_onlar_id_mid[my_mid]
-                        ham_sözlük = ("mid", my_mid)
-
-                    # 2) Match_ID ile bulamazsak normalize Belge No ile dene
-                    if not cands and my_raw_key and my_raw_key in dict_onlar_id_raw:
-                        cands = dict_onlar_id_raw[my_raw_key]
-                        ham_sözlük = ("raw", my_raw_key)
+                    if key_mid and key_mid in dict_onlar_id_mid:
+                        cands.extend(dict_onlar_id_mid[key_mid])
+                    if not cands and key_raw and key_raw in dict_onlar_id_raw:
+                        cands.extend(dict_onlar_id_raw[key_raw])
 
                     if cands:
                         best = None
                         min_diff = float("inf")
 
-                        # Aynı anahtar için en uygun adayı bul (net bakiye açısından)
                         for c in cands:
-                            if c["unique_idx"] not in matched_ids:
-                                their_amt_net = c["Borc"] - c["Alacak"]
-                                diff = abs(my_amt + their_amt_net)  # zıt yön kontrolü
-                                if diff < min_diff:
-                                    min_diff = diff
-                                    best = c
+                            if c["unique_idx"] in matched_ids:
+                                continue
+                            their_amt_net = c["Borc"] - c["Alacak"]
+                            diff = abs(my_amt + their_amt_net)  # zıt yön kontrolü
+                            if diff < min_diff:
+                                min_diff = diff
+                                best = c
 
                         if best is not None:
                             matched_ids.add(best["unique_idx"])
@@ -572,25 +570,24 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             display_onlar = best
                             their_amt_display = best["Borc"] - best["Alacak"]
 
-                            # Ham satırlardan pozitif yönlü daha anlamlı satırı çekmeye çalış
-                            ham_tip, key_val = ham_sözlük
-                            if ham_tip == "mid":
-                                adaylar_ham = dict_onlar_raw_mid.get(key_val, [])
-                            else:
-                                adaylar_ham = dict_onlar_raw_raw.get(key_val, [])
+                            mid_best = str(best.get("Match_ID", "")).strip()
+                            raw_best = str(best.get("Orijinal_Belge_No", "")).strip().upper().replace(" ", "")
 
-                            pozitifler = [
-                                r for r in adaylar_ham
-                                if (r["Borc"] - r["Alacak"]) > 0
-                            ]
-                            if pozitifler:
-                                display_onlar = max(
-                                    pozitifler,
-                                    key=lambda r: (r["Borc"] - r["Alacak"])
-                                )
-                                their_amt_display = (
-                                    display_onlar["Borc"] - display_onlar["Alacak"]
-                                )
+                            # Aynı belge için ham satırlardan pozitif yönlü olanı seçmeye çalış
+                            adaylar_raw = []
+                            if mid_best and mid_best in dict_onlar_raw_mid:
+                                adaylar_raw.extend(dict_onlar_raw_mid[mid_best])
+                            if raw_best and raw_best in dict_onlar_raw_raw:
+                                adaylar_raw.extend(dict_onlar_raw_raw[raw_best])
+
+                            if adaylar_raw:
+                                pozitifler = [r for r in adaylar_raw if (r["Borc"] - r["Alacak"]) > 0]
+                                if pozitifler:
+                                    display_onlar = max(
+                                        pozitifler,
+                                        key=lambda r: (r["Borc"] - r["Alacak"])
+                                    )
+                                    their_amt_display = display_onlar["Borc"] - display_onlar["Alacak"]
 
                             # Fark (TL) = ekranda görünen iki tutarın toplamı
                             real_diff = my_amt + their_amt_display
@@ -629,7 +626,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             eslesenler.append(d)
                             found = True
 
-                    # Hiç aday bulunamadıysa Bizde Var
+                    # Hiç aday bulunamadıysa Bizde Var olarak yaz
                     if not found:
                         d_un = {
                             "Durum": "🔴 Bizde Var",
@@ -643,7 +640,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
 
                 # --- KARŞI TARAFTA KALAN BELGELER ---
                 un_onlar = []
-                for idx, row in grp_onlar.iterrows():
+                for _, row in grp_onlar.iterrows():
                     if row["Match_ID"] and row["unique_idx"] not in matched_ids:
                         amt = row["Borc"] - row["Alacak"]
                         d_un = {
@@ -652,6 +649,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             "Tarih": safe_strftime(row["Tarih"]),
                             "Tutar (Onlar)": amt,
                         }
+                            # rapora ekstra kolonlar
                         for c in ex_onlar:
                             d_un[f"KARŞI: {c}"] = str(row.get(c, ""))
                         un_onlar.append(d_un)
@@ -828,6 +826,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

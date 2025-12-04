@@ -514,33 +514,56 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         how="inner",
                         suffixes=("_Biz", "_Onlar")
                     )
+                    def hesap_fatura_tutar(m, rol_kodu):
+                        # Kolonları güvenli şekilde sayıya çevir
+                        bb = float(m.get("Borc_Biz", 0) or 0)       # Biz Borç
+                        ba = float(m.get("Alacak_Biz", 0) or 0)    # Biz Alacak
+                        ob = float(m.get("Borc_Onlar", 0) or 0)    # Onlar Borç
+                        oa = float(m.get("Alacak_Onlar", 0) or 0)  # Onlar Alacak
 
+                        candidates = []
+
+                        if rol_kodu == "Biz Alıcıyız":
+                            # 1) Normal fatura: Biz Alacak, Onlar Borç
+                            if (ba != 0) or (ob != 0):
+                                diff1 = ob - ba
+                                candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff1))
+
+                            # 2) İade: Biz Borç, Onlar Alacak
+                            if (bb != 0) or (oa != 0):
+                                diff2 = oa - bb
+                                candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff2))
+
+                        else:  # Biz Satıcıyız
+                            # 1) Normal fatura: Biz Borç, Onlar Alacak
+                            if (bb != 0) or (oa != 0):
+                                diff1 = oa - bb
+                                candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff1))
+
+                            # 2) İade: Biz Alacak, Onlar Borç
+                            if (ba != 0) or (ob != 0):
+                                diff2 = ob - ba
+                                candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff2))
+
+                        # Hiç aday yoksa (tuhaf durum), eski net mantığına düş
+                        if not candidates:
+                            my_net = bb - ba
+                            their_net = ob - oa
+                            diff = my_net + their_net
+                            return my_net, their_net, diff
+
+                        # Farka en yakın (mutlak değeri en küçük) adayı seç
+                        best = min(candidates, key=lambda x: abs(x[3]))
+                        _, my_amt, their_amt, diff = best
+                        return my_amt, their_amt, diff
+                      
                 matched_biz_idx = set()
                 matched_onlar_idx = set()
 
                 # Eğer merged tamamen boşsa bile, aşağıda "Bizde Var / Onlarda Var" yine dolacak
                 for _, m in merged.iterrows():
-                    my_amt = m["Borc_Biz"] - m["Alacak_Biz"]
-                    their_amt_raw = m["Borc_Onlar"] - m["Alacak_Onlar"]
-                    mid = m.get("Match_ID", "")
-                    display_their = their_amt_raw
-                    display_date = m["Tarih_Onlar"]
-
-                    if mid:
-                        cand = raw_onlar[raw_onlar["Match_ID"] == mid]
-                        if not cand.empty:
-                            cand["net"] = cand["Borc"] - cand["Alacak"]
-                            pozitif = cand[cand["net"] > 0]
-                            
-                            if not pozitif.empty:
-                                best = pozitif.iloc[0]
-                                display_their = best["net"]
-                                display_date = best["Tarih"]
-                            else:
-                                best = cand.iloc[0]
-                                display_their = best["net"]
-                                display_date = best["Tarih"]
-                    real_diff = my_amt + display_their
+                    # Rol kuralına göre tutarları seç
+                    my_amt, their_amt, real_diff = hesap_fatura_tutar(m, rol_kodu)
 
                     status = "✅ Tam Eşleşme" if abs(real_diff) < 1 else "❌ Tutar Farkı"
 
@@ -548,9 +571,9 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         "Durum": status,
                         "Belge No": m["Orijinal_Belge_No_Biz"],
                         "Tarih (Biz)": safe_strftime(m["Tarih_Biz"]),
-                        "Tarih (Onlar)": safe_strftime(display_date),
+                        "Tarih (Onlar)": safe_strftime(m["Tarih_Onlar"]),
                         "Tutar (Biz)": my_amt,
-                        "Tutar (Onlar)": display_their,
+                        "Tutar (Onlar)": their_amt,
                         "Fark (TL)": real_diff,
                     }
 
@@ -561,6 +584,16 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         d["Döviz (Biz)"] = dv_biz_val
                         d["Döviz (Onlar)"] = dv_onlar_val
                         d["Fark (Döviz)"] = dv_biz_val - dv_onlar_val
+
+                    # Ekstra kolonlar (Biz)
+                    for c in ex_biz:
+                        col_biz = c + "_Biz" if c + "_Biz" in m.index else c
+                        d[f"BİZ: {c}"] = str(m.get(col_biz, ""))
+
+                    # Ekstra kolonlar (Karşı)
+                    for c in ex_onlar:
+                        col_on = c + "_Onlar" if c + "_Onlar" in m.index else c
+                        d[f"KARŞI: {c}"] = str(m.get(col_on, ""))
 
                     eslesenler.append(d)
                     matched_biz_idx.add(m["unique_idx_Biz"])
@@ -750,5 +783,6 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 

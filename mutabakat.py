@@ -565,44 +565,46 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 # Eğer merged tamamen boşsa bile, aşağıda "Bizde Var / Onlarda Var" yine dolacak
                 for _, m in merged.iterrows():
                     my_amt = m["Borc_Biz"] - m["Alacak_Biz"]
-                    their_amt = m["Borc_Onlar"] - m["Alacak_Onlar"]
-                    real_diff = my_amt + their_amt
+                    their_amt_raw = m["Borc_Onlar"] - m["Alacak_Onlar"]
+                    mid = m.get("Match_ID", "")
+                    display_their = their_amt_raw
+                    display_date = m["Tarih_Onlar"]
 
-                    status = "✅ Tam Eşleşme" if abs(real_diff) < 1.0 else "❌ Tutar Farkı"
+                    if mid:
+                        cand = raw_onlar[raw_onlar["Match_ID"] == mid]
+                        if not cand.empty:
+                            cand["net"] = cand["Borc"] - cand["Alacak"]
+                            pozitif = cand[cand["net"] > 0]
+                            
+                            if not pozitif.empty:
+                                best = pozitif.iloc[0]
+                                display_their = best["net"]
+                                display_date = best["Tarih"]
+                            else:
+                                best = cand.iloc[0]
+                                display_their = best["net"]
+                                display_date = best["Tarih"]
+                    real_diff = my_amt + display_their
 
-                    dv_biz_val = 0.0
-                    dv_onlar_val = 0.0
-                    if doviz_raporda:
-                        if m["Para_Birimi_Biz"] not in ["TRY", "TL"]:
-                            dv_biz_val = float(m.get("Doviz_Tutari_Biz", 0) or 0)
-                        if m["Para_Birimi_Onlar"] not in ["TRY", "TL"]:
-                            dv_onlar_val = float(m.get("Doviz_Tutari_Onlar", 0) or 0)
+                    status = "✅ Tam Eşleşme" if abs(real_diff) < 1 else "❌ Tutar Farkı"
 
                     d = {
                         "Durum": status,
                         "Belge No": m["Orijinal_Belge_No_Biz"],
                         "Tarih (Biz)": safe_strftime(m["Tarih_Biz"]),
-                        "Tarih (Onlar)": safe_strftime(m["Tarih_Onlar"]),
+                        "Tarih (Onlar)": safe_strftime(display_date),
                         "Tutar (Biz)": my_amt,
-                        "Tutar (Onlar)": their_amt,
+                        "Tutar (Onlar)": display_their,
                         "Fark (TL)": real_diff,
                     }
 
                     if doviz_raporda:
+                        dv_biz_val = float(m.get("Doviz_Tutari_Biz", 0) or 0)
+                        dv_onlar_val = float(m.get("Doviz_Tutari_Onlar", 0) or 0)
                         d["PB"] = m["Para_Birimi_Biz"]
                         d["Döviz (Biz)"] = dv_biz_val
                         d["Döviz (Onlar)"] = dv_onlar_val
                         d["Fark (Döviz)"] = dv_biz_val - dv_onlar_val
-
-                    # Ekstra kolonlar (Biz)
-                    for c in ex_biz:
-                        col_biz = c + "_Biz" if c + "_Biz" in m.index else c
-                        d[f"BİZ: {c}"] = str(m.get(col_biz, ""))
-
-                    # Ekstra kolonlar (Karşı)
-                    for c in ex_onlar:
-                        col_on = c + "_Onlar" if c + "_Onlar" in m.index else c
-                        d[f"KARŞI: {c}"] = str(m.get(col_on, ""))
 
                     eslesenler.append(d)
                     matched_biz_idx.add(m["unique_idx_Biz"])
@@ -640,116 +642,77 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 #  ÖDEME EŞLEŞTİRME (REF / TARİH / TUTAR-YÖN)
                 # =========================================================
                 if not pay_biz.empty and not pay_onlar.empty:
-                    pay_onlar_ref = {}
-                    used_onlar = set()
+                    dict_onlar_pay_by_ref = {}
+                    dict_onlar_pay_by_amt = {}
 
-                    for idx, row_p in pay_onlar.iterrows():
-                        pid = row_p.get("Payment_ID", "")
+                    for idx, r in pay_onlar.iterrows():
+                        pid = r['Payment_ID']
+                        amt = abs(r['Borc'] - r['Alacak'])
+                        
                         if pid:
-                            pay_onlar_ref.setdefault(pid, []).append((idx, row_p))
+                            dict_onlar_pay_by_ref.setdefault(pid, []).append(idx)
 
+                        dict_onlar_pay_by_amt.setdefault((amt, r["Para_Birimi"]), []).append(idx)
+
+                    used = set()
+                    
                     for idx, row_p in pay_biz.iterrows():
-                        pid = row_p.get("Payment_ID", "")
-                        biz_net = row_p["Borc"] - row_p["Alacak"]
+                        biz_pid = r["Payment_ID"]
+                        biz_amt = abs(r["Borc"] - r["Alacak"])
+                        biz_cur = r["Para_Birimi"]
 
-                        if not pid or pid not in pay_onlar_ref:
-                            d_un = {
-                                "Durum": "🔴 Bizde Var/Onlarda Yok",
-                                "Ödeme Ref": pid,
-                                "Tarih": safe_strftime(row_p.get("Tarih_Odeme", row_p["Tarih"])),
-                                "Tutar": biz_net,
-                                "PB": row_p["Para_Birimi"],
-                            }
-                            for c in ex_biz:
-                                d_un[f"BİZ: {c}"] = str(row_p.get(c, ""))
-                            un_biz.append(d_un)
-                            continue
+                        found_idx = None
 
-                        aday_idx = None
-                        aday_row = None
-                        for j, r_onlar in pay_onlar_ref[pid]:
-                            if j not in used_onlar:
-                                aday_idx = j
-                                aday_row = r_onlar
-                                break
+                        # 1️⃣ Öncelik: Ref no eşleşmesi
+                        if biz_pid and biz_pid in dict_onlar_pay_by_ref:
+                            for i in dict_onlar_pay_by_ref[biz_pid]:
+                                if i not in used:
+                                    found_idx = i
+                                    break
 
-                        if aday_idx is None:
-                            d_un = {
-                                "Durum": "🔴 Bizde Var/Onlarda Yok",
-                                "Ödeme Ref": pid,
-                                "Tarih": safe_strftime(row_p.get("Tarih_Odeme", row_p["Tarih"])),
-                                "Tutar": biz_net,
-                                "PB": row_p["Para_Birimi"],
-                            }
-                            for c in ex_biz:
-                                d_un[f"BİZ: {c}"] = str(row_p.get(c, ""))
-                            un_biz.append(d_un)
-                            continue
+                        # 2️⃣ Tutar + PB eşleşmesi
+                        if found_idx is None:
+                            key = (biz_amt, biz_cur)
+                            if key in dict_onlar_pay_by_amt:
+                                for i in dict_onlar_pay_by_amt[key]:
+                                    if i not in used:
+                                        found_idx = i
+                                        break
 
-                        used_onlar.add(aday_idx)
-                        onlar_net = aday_row["Borc"] - aday_row["Alacak"]
+                        # EŞLEŞME BULUNDU
+                        if found_idx is not None:
+                            used.add(found_idx)
+                            row_onlar = pay_onlar.loc[found_idx]
 
-                        ref_ok = True
 
-                        t_biz = row_p.get("Tarih_Odeme", row_p["Tarih"])
-                        t_onlar = aday_row.get("Tarih_Odeme", aday_row["Tarih"])
-                        date_ok = False
-                        if pd.notna(t_biz) and pd.notna(t_onlar):
-                            try:
-                                date_ok = t_biz.date() == t_onlar.date()
-                            except AttributeError:
-                                date_ok = safe_strftime(t_biz) == safe_strftime(t_onlar)
+                            eslesen_odeme.append({
+                                "Durum": "✅ Ödeme Eşleşti",
+                                "Ödeme Ref": biz_pid,
+                                "Tarih (Biz)": safe_strftime(r["Tarih_Odeme"]),
+                                "Tarih (Onlar)": safe_strftime(row_onlar["Tarih_Odeme"]),
+                                "Tutar (Biz)": biz_amt,
+                                "Tutar (Onlar)": abs(row_onlar["Borc"] - row_onlar["Alacak"]),
+                                "PB": biz_cur
+                            })
 
-                        amt_ok = False
-                        if rol_kodu == "Biz Alıcıyız":
-                            if biz_net > 0 and onlar_net < 0 and abs(biz_net + onlar_net) < 0.01:
-                                amt_ok = True
-                        else:  # Biz Satıcıyız
-                            if biz_net < 0 and onlar_net > 0 and abs(biz_net + onlar_net) < 0.01:
-                                amt_ok = True
-
-                        if ref_ok and date_ok and amt_ok:
-                            durum_txt = "✅ Tam Eşleşti"
-                        elif ref_ok and date_ok:
-                            durum_txt = "🟡 Ref ve Tarih Eşleşti"
-                            # Tarih eşit ama tutar farkı varsa gene görebil
-                        elif ref_ok:
-                            durum_txt = "🟡 Ödeme Ref Eşleşti"
                         else:
-                            durum_txt = "⚪ Eşleşti (Detay Kontrol)"
+                            un_biz.append({
+                                "Durum": "🔴 Bizde Var (Ödeme)",
+                                "Ödeme Ref": biz_pid,
+                                "Tarih": safe_strftime(r["Tarih_Odeme"]),
+                                "Tutar": biz_amt
+                            })
 
-                        d_pay = {
-                            "Durum": durum_txt,
-                            "Ödeme Ref": pid,
-                            "Tarih (Biz)": safe_strftime(t_biz),
-                            "Tarih (Onlar)": safe_strftime(t_onlar),
-                            "Tutar (Biz)": biz_net,
-                            "Tutar (Onlar)": onlar_net,
-                            "Fark (TL)": biz_net + onlar_net,
-                            "PB": row_p["Para_Birimi"],
-                        }
-
-                        for c in ex_biz:
-                            d_pay[f"BİZ: {c}"] = str(row_p.get(c, ""))
-                        for c in ex_onlar:
-                            d_pay[f"KARŞI: {c}"] = str(aday_row.get(c, ""))
-
-                        eslesen_odeme.append(d_pay)
-
-                    # Karşı tarafta ref'i olup da hiç eşleşmeyen ödemeler
-                    for idx, row_p in pay_onlar.iterrows():
-                        if idx not in used_onlar:
-                            onlar_net = row_p["Borc"] - row_p["Alacak"]
-                            d_un = {
-                                "Durum": "🔵 Onlarda Var/Bizde Yok",
-                                "Ödeme Ref": row_p.get("Payment_ID", ""),
-                                "Tarih": safe_strftime(row_p.get("Tarih_Odeme", row_p["Tarih"])),
-                                "Tutar": onlar_net,
-                                "PB": row_p["Para_Birimi"],
-                            }
-                            for c in ex_onlar:
-                                d_un[f"KARŞI: {c}"] = str(row_p.get(c, ""))
-                            un_onlar.append(d_un)
+                # Karşı taraftaki eşleşmeyen ödemeler
+                    for idx, r in pay_onlar.iterrows():
+                        if idx not in used:
+                             un_onlar.append({
+                                 "Durum": "🔵 Onlarda Var (Ödeme)",
+                                 "Ödeme Ref": r["Payment_ID"],
+                                 "Tarih": safe_strftime(r["Tarih_Odeme"]),
+                                 "Tutar": abs(r["Borc"] - r["Alacak"])
+                            })
+                                    
 
                 # --- SONUÇLARI SESSION'A YAZ ---
                 st.session_state['sonuclar'] = {
@@ -812,6 +775,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

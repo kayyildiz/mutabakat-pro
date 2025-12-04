@@ -189,44 +189,44 @@ def ozet_rapor_olustur(df_biz_raw, df_onlar_raw):
 def veri_hazirla(df, config, taraf_adi, extra_cols=None):
     if extra_cols is None:
         extra_cols = []
+
+    # Aynı isimli kolonları temizle
     df = df.loc[:, ~df.columns.duplicated()]
     df_copy = df.copy()
-    
-    # Ödeme Ayrıştırma
-    df_payments = pd.DataFrame()
-    filter_col = config.get('odeme_turu_sutunu')
-    filter_vals = config.get('odeme_turu_degerleri')
-    
-    if filter_col and filter_vals and filter_col in df_copy.columns:
-        mask_payment = df_copy[filter_col].isin(filter_vals)
-        df_payments = df_copy[mask_payment].copy()
-        df_copy = df_copy[~mask_payment]
 
+    # --- 1) Ana tablo (fatura + ödeme karışık) ---
     df_new = pd.DataFrame()
+
+    # Extra kolonlar
     for col in extra_cols:
         if col in df_copy.columns:
             df_new[col] = df_copy[col].astype(str)
 
+    # Tarihler
     df_new['Tarih'] = pd.to_datetime(df_copy[config['tarih_col']], dayfirst=True, errors='coerce')
-    
+
     if config.get('tarih_odeme_col') and config['tarih_odeme_col'] != "Seçiniz...":
-        df_new['Tarih_Odeme'] = pd.to_datetime(df_copy[config['tarih_odeme_col']], dayfirst=True, errors='coerce')
+        df_new['Tarih_Odeme'] = pd.to_datetime(
+            df_copy[config['tarih_odeme_col']], dayfirst=True, errors='coerce'
+        )
     else:
         df_new['Tarih_Odeme'] = df_new['Tarih']
 
-    # Belge No
+    # Belge No / Match_ID
     df_new['Orijinal_Belge_No'] = df_copy[config['belge_col']].astype(str)
-    df_new['Match_ID'] = df_new['Orijinal_Belge_No'].apply(lambda x: ''.join(filter(str.isdigit, str(x))))
+    df_new['Match_ID'] = df_new['Orijinal_Belge_No'].apply(
+        lambda x: ''.join(filter(str.isdigit, str(x)))
+    )
     df_new['Match_ID'] = df_new['Match_ID'].replace(r'^0+', '', regex=True)
-    
-    # Payment ID
+
+    # Payment_ID (Ödeme Ref / Dekont)
     if config.get('odeme_ref_col') and config['odeme_ref_col'] != "Seçiniz...":
         df_new['Payment_ID'] = df_copy[config['odeme_ref_col']].apply(referans_no_temizle)
     else:
         df_new['Payment_ID'] = ""
 
     df_new['Kaynak'] = taraf_adi
-    
+
     # Döviz
     doviz_aktif = False
     if config.get('doviz_cinsi_col') and config['doviz_cinsi_col'] != "Seçiniz...":
@@ -235,9 +235,11 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
         doviz_aktif = True
     else:
         df_new['Para_Birimi'] = "TRY"
-        
+
     if config.get('doviz_tutar_col') and config['doviz_tutar_col'] != "Seçiniz...":
-        df_new['Doviz_Tutari'] = pd.to_numeric(df_copy[config['doviz_tutar_col']], errors='coerce').fillna(0).abs()
+        df_new['Doviz_Tutari'] = pd.to_numeric(
+            df_copy[config['doviz_tutar_col']], errors='coerce'
+        ).fillna(0).abs()
         doviz_aktif = True
     else:
         df_new['Doviz_Tutari'] = 0.0
@@ -246,7 +248,8 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
     if "Tek Kolon" in config['tutar_tipi']:
         col_name = config['tutar_col']
         ham = pd.to_numeric(df_copy[col_name], errors='coerce').fillna(0)
-        rol = config.get('rol_kodu', 'Biz Alıcıyız') 
+        rol = config.get('rol_kodu', 'Biz Alıcıyız')
+
         if rol == "Biz Alıcıyız":
             df_new['Borc'] = ham.where(ham > 0, 0)
             df_new['Alacak'] = ham.where(ham < 0, 0).abs()
@@ -257,52 +260,12 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
         df_new['Borc'] = pd.to_numeric(df_copy[config['borc_col']], errors='coerce').fillna(0)
         df_new['Alacak'] = pd.to_numeric(df_copy[config['alacak_col']], errors='coerce').fillna(0)
 
-    # Ödeme Verisi Hazırla
-    df_pay_final = pd.DataFrame()
-    if not df_payments.empty:
-        df_pay_final = df_new.iloc[0:0].copy()
-        df_pay_final['Tarih'] = pd.to_datetime(df_payments[config['tarih_col']], dayfirst=True, errors='coerce')
-        
-        if config.get('tarih_odeme_col') and config['tarih_odeme_col'] != "Seçiniz...":
-            df_pay_final['Tarih_Odeme'] = pd.to_datetime(df_payments[config['tarih_odeme_col']], dayfirst=True, errors='coerce')
-        else:
-            df_pay_final['Tarih_Odeme'] = df_pay_final['Tarih']
+    # --- 2) Ödeme satırlarını ayır ---
+    # Ödeme = Payment_ID dolu satırlar
+    df_pay_final = df_new[df_new['Payment_ID'] != ""].copy()
+    df_pay_final['unique_idx'] = df_pay_final.index  # ödeme eşleştirmede kullanılıyor
 
-        if "Tek Kolon" in config['tutar_tipi']:
-            col_name = config['tutar_col']
-            ham = pd.to_numeric(df_payments[col_name], errors='coerce').fillna(0)
-            # rol yukarıda Tek Kolon bloğunda tanımlandı
-            if rol == "Biz Alıcıyız":
-                df_pay_final['Borc'] = ham.where(ham > 0, 0)
-                df_pay_final['Alacak'] = ham.where(ham < 0, 0).abs()
-            else:
-                df_pay_final['Alacak'] = ham.where(ham > 0, 0)
-                df_pay_final['Borc'] = ham.where(ham < 0, 0).abs()
-        else:
-            df_pay_final['Borc'] = pd.to_numeric(df_payments[config['borc_col']], errors='coerce').fillna(0)
-            df_pay_final['Alacak'] = pd.to_numeric(df_payments[config['alacak_col']], errors='coerce').fillna(0)
-        
-        if doviz_aktif:
-            df_pay_final['Para_Birimi'] = df_payments[config['doviz_cinsi_col']].astype(str).str.upper().str.strip()
-            df_pay_final['Para_Birimi'] = df_pay_final['Para_Birimi'].replace({'TL': 'TRY'})
-            df_pay_final['Doviz_Tutari'] = pd.to_numeric(df_payments[config['doviz_tutar_col']], errors='coerce').fillna(0).abs()
-        else:
-            df_pay_final['Para_Birimi'] = "TRY"
-            df_pay_final['Doviz_Tutari'] = 0.0
-            
-        for col in extra_cols:
-            if col in df_payments.columns:
-                df_pay_final[col] = df_payments[col].astype(str)
-            
-        df_pay_final['Match_ID'] = ""
-        df_pay_final['Kaynak'] = taraf_adi
-        df_pay_final['unique_idx'] = df_pay_final.index
-        
-        if config.get('odeme_ref_col') and config['odeme_ref_col'] != "Seçiniz...":
-            df_pay_final['Payment_ID'] = df_payments[config['odeme_ref_col']].apply(referans_no_temizle)
-        else:
-            df_pay_final['Payment_ID'] = ""
-
+    # Fatura tarafı için (raw_biz/raw_onlar) df_new aynen dönüyor
     return df_new, df_pay_final, doviz_aktif
 
 def grupla(df, is_doviz_aktif):
@@ -793,3 +756,4 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+

@@ -105,7 +105,6 @@ def referans_no_temizle(val):
 
     return digits  # Rakamlar varsa bunlar Payment_ID olur
 
-
 def safe_strftime(val):
     if isinstance(val, (pd.Series, list, tuple)):
         val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
@@ -303,6 +302,51 @@ def grupla(df, is_doviz_aktif):
     final['unique_idx'] = final.index
     return final
 
+# --- Fatura tutarını rol kuralına göre seçen fonksiyon ---
+
+def hesap_fatura_tutar(m, rol_kodu):
+    # Kolonları güvenli şekilde sayıya çevir
+    bb = float(m.get("Borc_Biz", 0) or 0)       # Biz Borç
+    ba = float(m.get("Alacak_Biz", 0) or 0)    # Biz Alacak
+    ob = float(m.get("Borc_Onlar", 0) or 0)    # Onlar Borç
+    oa = float(m.get("Alacak_Onlar", 0) or 0)  # Onlar Alacak
+
+    candidates = []
+
+    if rol_kodu == "Biz Alıcıyız":
+        # 1) Normal fatura: Biz Alacak, Onlar Borç
+        if (ba != 0) or (ob != 0):
+            diff1 = ob - ba
+            candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff1))
+
+        # 2) İade: Biz Borç, Onlar Alacak
+        if (bb != 0) or (oa != 0):
+            diff2 = oa - bb
+            candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff2))
+
+    else:  # Biz Satıcıyız
+        # 1) Normal fatura: Biz Borç, Onlar Alacak
+        if (bb != 0) or (oa != 0):
+            diff1 = oa - bb
+            candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff1))
+
+        # 2) İade: Biz Alacak, Onlar Borç
+        if (ba != 0) or (ob != 0):
+            diff2 = ob - ba
+            candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff2))
+
+    # Hiç aday yoksa (tuhaf durum), eski net mantığına düş
+    if not candidates:
+        my_net = bb - ba
+        their_net = ob - oa
+        diff = my_net + their_net
+        return my_net, their_net, diff
+
+    # Farka en yakın (mutlak değeri en küçük) adayı seç
+    best = min(candidates, key=lambda x: abs(x[3]))
+    _, my_amt, their_amt, diff = best
+    return my_amt, their_amt, diff
+
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])
 with c_title:
@@ -405,7 +449,6 @@ with col2:
         ex_onlar = st.multiselect("Rapora Eklenecek Sütunlar (Karşı):", options=d2.columns.tolist(), key="multi2")
 
 st.divider()
-
 st.divider()
 
 # --- 4. ANALİZ MOTORU ---
@@ -514,49 +557,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         how="inner",
                         suffixes=("_Biz", "_Onlar")
                     )
-                    def hesap_fatura_tutar(m, rol_kodu):
-                        # Kolonları güvenli şekilde sayıya çevir
-                        bb = float(m.get("Borc_Biz", 0) or 0)       # Biz Borç
-                        ba = float(m.get("Alacak_Biz", 0) or 0)    # Biz Alacak
-                        ob = float(m.get("Borc_Onlar", 0) or 0)    # Onlar Borç
-                        oa = float(m.get("Alacak_Onlar", 0) or 0)  # Onlar Alacak
 
-                        candidates = []
-
-                        if rol_kodu == "Biz Alıcıyız":
-                            # 1) Normal fatura: Biz Alacak, Onlar Borç
-                            if (ba != 0) or (ob != 0):
-                                diff1 = ob - ba
-                                candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff1))
-
-                            # 2) İade: Biz Borç, Onlar Alacak
-                            if (bb != 0) or (oa != 0):
-                                diff2 = oa - bb
-                                candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff2))
-
-                        else:  # Biz Satıcıyız
-                            # 1) Normal fatura: Biz Borç, Onlar Alacak
-                            if (bb != 0) or (oa != 0):
-                                diff1 = oa - bb
-                                candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff1))
-
-                            # 2) İade: Biz Alacak, Onlar Borç
-                            if (ba != 0) or (ob != 0):
-                                diff2 = ob - ba
-                                candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff2))
-
-                        # Hiç aday yoksa (tuhaf durum), eski net mantığına düş
-                        if not candidates:
-                            my_net = bb - ba
-                            their_net = ob - oa
-                            diff = my_net + their_net
-                            return my_net, their_net, diff
-
-                        # Farka en yakın (mutlak değeri en küçük) adayı seç
-                        best = min(candidates, key=lambda x: abs(x[3]))
-                        _, my_amt, their_amt, diff = best
-                        return my_amt, their_amt, diff
-                      
                 matched_biz_idx = set()
                 matched_onlar_idx = set()
 
@@ -783,6 +784,3 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
-
-
-

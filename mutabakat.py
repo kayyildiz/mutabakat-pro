@@ -87,30 +87,24 @@ def belge_no_temizle(val):
 
 @st.cache_data
 def referans_no_temizle(val):
-    # Seri / liste geldiyse ilk elemanı al
-    if isinstance(val, (pd.Series, list, tuple)):
-        val = val.iloc[0] if hasattr(val, 'iloc') else val[0]
-
     if pd.isna(val):
         return ""
 
-    # Excel'den gelen float referansları düzgün al
-    if isinstance(val, float):
-        s = f"{val:.0f}"
-    else:
-        s = str(val)
+    s = str(val).strip()
 
-    # Sadece rakamları bırak
-    s = re.sub(r'\D', '', s)
-
-    # Baştaki 0'ları temizle
-    s = s.lstrip('0')
-
-    # Çok kısa olanları yok say
-    if len(s) < 3:
+    # Tamamen boşsa ödeme değil
+    if s == "":
         return ""
 
-    return s
+    # Sayı bulmaya çalış ama bulamazsan da string'i olduğu gibi kabul et
+    digits = re.sub(r'\D', '', s)
+
+    # Eğer içinde hiç rakam yoksa yine de referans kabul et
+    if digits == "":
+        return s.upper()
+
+    return digits  # Rakamlar varsa bunlar Payment_ID olur
+
 
 def safe_strftime(val):
     if isinstance(val, (pd.Series, list, tuple)):
@@ -756,4 +750,5 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 

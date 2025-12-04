@@ -506,138 +506,114 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 #  FATURA / BELGE EŞLEŞTİRME (EŞLEŞENLER)
                 # =========================================================
 
-                # Karşı tarafın HAM satırlarından Match_ID -> liste sözlüğü
-                dict_onlar_raw = {}
-                for idx, r in raw_onlar.iterrows():
-                    mid = str(r.get("Match_ID", "")).strip()
-                    if mid:
-                        dict_onlar_raw.setdefault(mid, []).append(r)
+                # Match_ID'leri stringe çevirip boşları temizle
+                grp_biz["Match_ID"] = grp_biz["Match_ID"].fillna("").astype(str)
+                grp_onlar["Match_ID"] = grp_onlar["Match_ID"].fillna("").astype(str)
 
-                # Gruplanmış karşı taraf satırlarından Match_ID -> liste sözlüğü
-                dict_onlar_id = {}
-                for idx, row in grp_onlar.iterrows():
-                    mid = str(row.get("Match_ID", "")).strip()
-                    if mid:
-                        dict_onlar_id.setdefault(mid, []).append(row)
+                # Ortak Match_ID istatistiklerini küçük bir DEBUG notu olarak göster
+                biz_mid_nonempty = grp_biz["Match_ID"].ne("").sum()
+                onlar_mid_nonempty = grp_onlar["Match_ID"].ne("").sum()
+                ortak_mid = set(grp_biz.loc[grp_biz["Match_ID"] != "", "Match_ID"]) & \
+                            set(grp_onlar.loc[grp_onlar["Match_ID"] != "", "Match_ID"])
 
-                matched_ids = set()          # grp_onlar tarafında kullanılan satırların unique_idx'leri
-                eslesenler = []              # FATURA / BELGE eşleşmeleri
-                eslesen_odeme = []           # ÖDEME eşleşmeleri (aşağıda dolduruluyor)
-                un_biz = []                  # Bizde var listesi
-                un_onlar = []                # Onlarda var listesi
+                st.caption(
+                    f"Biz Match_ID (boş olmayan): {biz_mid_nonempty} | "
+                    f"Onlar Match_ID (boş olmayan): {onlar_mid_nonempty} | "
+                    f"Ortak Match_ID sayısı: {len(ortak_mid)}"
+                )
 
-                # --- ANA EŞLEŞTİRME (BELGE NO / Match_ID) ---
-                for idx, row in grp_biz.iterrows():
-                    my_mid = str(row.get("Match_ID", "")).strip()
-                    my_amt = row["Borc"] - row["Alacak"]  # Net (Biz)
-                    found = False
+                # Sadece Match_ID kesişiminde merge
+                biz_m = grp_biz[grp_biz["Match_ID"].isin(ortak_mid)].copy()
+                onlar_m = grp_onlar[grp_onlar["Match_ID"].isin(ortak_mid)].copy()
 
-                    if my_mid and my_mid in dict_onlar_id:
-                        cands = dict_onlar_id[my_mid]
-                        best = None
-                        min_diff = float("inf")
+                merged = biz_m.merge(
+                    onlar_m,
+                    on="Match_ID",
+                    how="inner",
+                    suffixes=("_Biz", "_Onlar")
+                )
 
-                        # Aynı Match_ID için net tutarı en uyumlu adayı bul
-                        for c in cands:
-                            if c["unique_idx"] in matched_ids:
-                                continue
-                            their_net = c["Borc"] - c["Alacak"]
-                            diff = abs(my_amt + their_net)  # zıt yönlü bekliyoruz
-                            if diff < min_diff:
-                                min_diff = diff
-                                best = c
+                eslesenler = []
+                eslesen_odeme = []
+                un_biz = []
+                un_onlar = []
 
-                        if best is not None:
-                            # Bu gruplanmış satırı kullandık
-                            matched_ids.add(best["unique_idx"])
+                # Eşleşmiş unique_idx set'leri
+                matched_biz_idx = set()
+                matched_onlar_idx = set()
 
-                            # Ekranda gösterilecek taraf varsayılan olarak gruplanmış satır
-                            display_onlar = best
-                            their_amt_display = best["Borc"] - best["Alacak"]
+                for _, m in merged.iterrows():
+                    my_amt = m["Borc_Biz"] - m["Alacak_Biz"]
+                    their_amt = m["Borc_Onlar"] - m["Alacak_Onlar"]
+                    real_diff = my_amt + their_amt
 
-                            # Aynı Match_ID için ham satırlarda pozitif yönlü olanı tercih et
-                            if my_mid in dict_onlar_raw:
-                                adaylar = dict_onlar_raw[my_mid]
-                                pozitifler = [
-                                    r for r in adaylar
-                                    if (r["Borc"] - r["Alacak"]) > 0
-                                ]
-                                if pozitifler:
-                                    display_onlar = max(
-                                        pozitifler,
-                                        key=lambda r: (r["Borc"] - r["Alacak"])
-                                    )
-                                    their_amt_display = (
-                                        display_onlar["Borc"] - display_onlar["Alacak"]
-                                    )
+                    status = "✅ Tam Eşleşme" if abs(real_diff) < 1.0 else "❌ Tutar Farkı"
 
-                            # Fark (TL) = ekranda gösterdiğimiz iki tutarın toplamı
-                            real_diff = my_amt + their_amt_display
-                            status = "✅ Tam Eşleşme" if abs(real_diff) < 1.0 else "❌ Tutar Farkı"
+                    dv_biz_val = 0.0
+                    dv_onlar_val = 0.0
+                    if doviz_raporda:
+                        if m["Para_Birimi_Biz"] not in ["TRY", "TL"]:
+                            dv_biz_val = float(m.get("Doviz_Tutari_Biz", 0) or 0)
+                        if m["Para_Birimi_Onlar"] not in ["TRY", "TL"]:
+                            dv_onlar_val = float(m.get("Doviz_Tutari_Onlar", 0) or 0)
 
-                            # --- DÖVİZ HESABI (sadece TRY/TL dışı) ---
-                            dv_biz_val = 0.0
-                            dv_onlar_val = 0.0
-                            if doviz_raporda:
-                                if row["Para_Birimi"] not in ["TRY", "TL"]:
-                                    dv_biz_val = float(row.get("Doviz_Tutari", 0) or 0)
-                                if display_onlar["Para_Birimi"] not in ["TRY", "TL"]:
-                                    dv_onlar_val = float(display_onlar.get("Doviz_Tutari", 0) or 0)
+                    d = {
+                        "Durum": status,
+                        "Belge No": m["Orijinal_Belge_No_Biz"],
+                        "Tarih (Biz)": safe_strftime(m["Tarih_Biz"]),
+                        "Tarih (Onlar)": safe_strftime(m["Tarih_Onlar"]),
+                        "Tutar (Biz)": my_amt,
+                        "Tutar (Onlar)": their_amt,
+                        "Fark (TL)": real_diff,
+                    }
 
-                            d = {
-                                "Durum": status,
-                                "Belge No": row["Orijinal_Belge_No"],
-                                "Tarih (Biz)": safe_strftime(row["Tarih"]),
-                                "Tarih (Onlar)": safe_strftime(display_onlar["Tarih"]),
-                                "Tutar (Biz)": my_amt,
-                                "Tutar (Onlar)": their_amt_display,
-                                "Fark (TL)": real_diff,
-                            }
+                    if doviz_raporda:
+                        d["PB"] = m["Para_Birimi_Biz"]
+                        d["Döviz (Biz)"] = dv_biz_val
+                        d["Döviz (Onlar)"] = dv_onlar_val
+                        d["Fark (Döviz)"] = dv_biz_val - dv_onlar_val
 
-                            if doviz_raporda:
-                                d["PB"] = row["Para_Birimi"]
-                                d["Döviz (Biz)"] = dv_biz_val
-                                d["Döviz (Onlar)"] = dv_onlar_val
-                                d["Fark (Döviz)"] = dv_biz_val - dv_onlar_val
+                    # Ekstra kolonlar (Biz)
+                    for c in ex_biz:
+                        col_biz = c + "_Biz" if c + "_Biz" in m.index else c
+                        d[f"BİZ: {c}"] = str(m.get(col_biz, ""))
 
-                            # Ekstra kolonlar (Biz)
-                            for c in ex_biz:
-                                d[f"BİZ: {c}"] = str(row.get(c, ""))
+                    # Ekstra kolonlar (Karşı)
+                    for c in ex_onlar:
+                        col_on = c + "_Onlar" if c + "_Onlar" in m.index else c
+                        d[f"KARŞI: {c}"] = str(m.get(col_on, ""))
 
-                            # Ekstra kolonlar (Karşı)
-                            for c in ex_onlar:
-                                d[f"KARŞI: {c}"] = str(display_onlar.get(c, ""))
+                    eslesenler.append(d)
+                    matched_biz_idx.add(m["unique_idx_Biz"])
+                    matched_onlar_idx.add(m["unique_idx_Onlar"])
 
-                            eslesenler.append(d)
-                            found = True
-
-                    # Aday bulunamadıysa Bizde Var
-                    if not found:
+                # --------- BİZDE VAR (FATURA) -----------------
+                for _, row_b in grp_biz.iterrows():
+                    if row_b["unique_idx"] not in matched_biz_idx:
+                        amt = row_b["Borc"] - row_b["Alacak"]
                         d_un = {
                             "Durum": "🔴 Bizde Var",
-                            "Belge No": row["Orijinal_Belge_No"],
-                            "Tarih": safe_strftime(row["Tarih"]),
-                            "Tutar (Biz)": my_amt,
+                            "Belge No": row_b["Orijinal_Belge_No"],
+                            "Tarih": safe_strftime(row_b["Tarih"]),
+                            "Tutar (Biz)": amt,
                         }
                         for c in ex_biz:
-                            d_un[f"BİZ: {c}"] = str(row.get(c, ""))
+                            d_un[f"BİZ: {c}"] = str(row_b.get(c, ""))
                         un_biz.append(d_un)
 
-                # --- KARŞI TARAFTA KALAN BELGELER ---
-                for idx, row in grp_onlar.iterrows():
-                    mid = str(row.get("Match_ID", "")).strip()
-                    if mid and row["unique_idx"] not in matched_ids:
-                        amt = row["Borc"] - row["Alacak"]
+                # --------- ONLARDA VAR (FATURA) -----------------
+                for _, row_o in grp_onlar.iterrows():
+                    if row_o["unique_idx"] not in matched_onlar_idx:
+                        amt = row_o["Borc"] - row_o["Alacak"]
                         d_un = {
                             "Durum": "🔵 Onlarda Var",
-                            "Belge No": row["Orijinal_Belge_No"],
-                            "Tarih": safe_strftime(row["Tarih"]),
+                            "Belge No": row_o["Orijinal_Belge_No"],
+                            "Tarih": safe_strftime(row_o["Tarih"]),
                             "Tutar (Onlar)": amt,
                         }
                         for c in ex_onlar:
-                            d_un[f"KARŞI: {c}"] = str(row.get(c, ""))
+                            d_un[f"KARŞI: {c}"] = str(row_o.get(c, ""))
                         un_onlar.append(d_un)
-
 
                 # =========================================================
                 #  ÖDEME EŞLEŞTİRME (REF / TARİH / TUTAR-YÖN)
@@ -767,7 +743,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
         except Exception as e:
             st.error(f"Hata: {e}")
 
-
 # --- 5. SONUÇ EKRANI ---
 if st.session_state.get('analiz_yapildi', False):
     res = st.session_state['sonuclar']
@@ -814,6 +789,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

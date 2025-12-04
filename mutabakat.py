@@ -202,14 +202,6 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
         df_payments = df_copy[mask_payment].copy()
         df_copy = df_copy[~mask_payment]
 
-    # Eğer yukarıdaki filtre ile ödeme ayrışmadıysa,
-    # Ödeme Ref / Dekont No kolonu dolu olan satırları "ödeme" kabul et
-    if df_payments.empty and config.get('odeme_ref_col') and config['odeme_ref_col'] != "Seçiniz..." \
-       and config['odeme_ref_col'] in df_copy.columns:
-        mask_payment = df_copy[config['odeme_ref_col']].astype(str).str.strip() != ""
-        df_payments = df_copy[mask_payment].copy()
-        df_copy = df_copy[~mask_payment]
-
     df_new = pd.DataFrame()
     for col in extra_cols:
         if col in df_copy.columns:
@@ -820,6 +812,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

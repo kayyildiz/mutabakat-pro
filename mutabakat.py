@@ -506,42 +506,71 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 #  FATURA / BELGE EŞLEŞTİRME (EŞLEŞENLER)
                 # =========================================================
 
-                # Match_ID'leri stringe çevirip boşları temizle
+                # Önce Match_ID kontrolü
                 grp_biz["Match_ID"] = grp_biz["Match_ID"].fillna("").astype(str)
                 grp_onlar["Match_ID"] = grp_onlar["Match_ID"].fillna("").astype(str)
 
-                # Ortak Match_ID istatistiklerini küçük bir DEBUG notu olarak göster
                 biz_mid_nonempty = grp_biz["Match_ID"].ne("").sum()
                 onlar_mid_nonempty = grp_onlar["Match_ID"].ne("").sum()
-                ortak_mid = set(grp_biz.loc[grp_biz["Match_ID"] != "", "Match_ID"]) & \
-                            set(grp_onlar.loc[grp_onlar["Match_ID"] != "", "Match_ID"])
-
-                st.caption(
-                    f"Biz Match_ID (boş olmayan): {biz_mid_nonempty} | "
-                    f"Onlar Match_ID (boş olmayan): {onlar_mid_nonempty} | "
-                    f"Ortak Match_ID sayısı: {len(ortak_mid)}"
-                )
-
-                # Sadece Match_ID kesişiminde merge
-                biz_m = grp_biz[grp_biz["Match_ID"].isin(ortak_mid)].copy()
-                onlar_m = grp_onlar[grp_onlar["Match_ID"].isin(ortak_mid)].copy()
-
-                merged = biz_m.merge(
-                    onlar_m,
-                    on="Match_ID",
-                    how="inner",
-                    suffixes=("_Biz", "_Onlar")
-                )
 
                 eslesenler = []
                 eslesen_odeme = []
                 un_biz = []
                 un_onlar = []
 
-                # Eşleşmiş unique_idx set'leri
+                # ------- 1) DEFAULT: Match_ID ile eşleştirme -------
+
+                if biz_mid_nonempty > 0 and onlar_mid_nonempty > 0:
+                    ortak_mid = set(grp_biz.loc[grp_biz["Match_ID"] != "", "Match_ID"]) & \
+                                set(grp_onlar.loc[grp_onlar["Match_ID"] != "", "Match_ID"])
+
+                    st.caption(
+                        f"[Match_ID] Biz (boş olmayan): {biz_mid_nonempty} | "
+                        f"Onlar (boş olmayan): {onlar_mid_nonempty} | "
+                        f"Ortak Match_ID sayısı: {len(ortak_mid)}"
+                    )
+
+                    biz_m = grp_biz[grp_biz["Match_ID"].isin(ortak_mid)].copy()
+                    onlar_m = grp_onlar[grp_onlar["Match_ID"].isin(ortak_mid)].copy()
+
+                    merged = biz_m.merge(
+                        onlar_m,
+                        on="Match_ID",
+                        how="inner",
+                        suffixes=("_Biz", "_Onlar")
+                    )
+
+                else:
+                    # ------- 2) FALLBACK: Orijinal_Belge_No ile eşleştirme -------
+                    # Burada Match_ID işe yaramıyorsa, direkt belge numarasını normalize edip eşleştiriyoruz.
+                    grp_biz["Merge_Key"] = grp_biz["Orijinal_Belge_No"].astype(str).str.upper().str.strip().str.replace(" ", "", regex=False)
+                    grp_onlar["Merge_Key"] = grp_onlar["Orijinal_Belge_No"].astype(str).str.upper().str.strip().str.replace(" ", "", regex=False)
+
+                    biz_key_nonempty = grp_biz["Merge_Key"].ne("").sum()
+                    onlar_key_nonempty = grp_onlar["Merge_Key"].ne("").sum()
+                    ortak_key = set(grp_biz.loc[grp_biz["Merge_Key"] != "", "Merge_Key"]) & \
+                                set(grp_onlar.loc[grp_onlar["Merge_Key"] != "", "Merge_Key"])
+
+                    st.caption(
+                        f"[Fallback: Orijinal_Belge_No] Biz (boş olmayan): {biz_key_nonempty} | "
+                        f"Onlar (boş olmayan): {onlar_key_nonempty} | "
+                        f"Ortak Belge No sayısı: {len(ortak_key)}"
+                    )
+
+                    biz_m = grp_biz[grp_biz["Merge_Key"].isin(ortak_key)].copy()
+                    onlar_m = grp_onlar[grp_onlar["Merge_Key"].isin(ortak_key)].copy()
+
+                    merged = biz_m.merge(
+                        onlar_m,
+                        on="Merge_Key",
+                        how="inner",
+                        suffixes=("_Biz", "_Onlar")
+                    )
+
                 matched_biz_idx = set()
                 matched_onlar_idx = set()
 
+                # Eğer merged tamamen boşsa bile, aşağıda "Bizde Var / Onlarda Var" yine dolacak
                 for _, m in merged.iterrows():
                     my_amt = m["Borc_Biz"] - m["Alacak_Biz"]
                     their_amt = m["Borc_Onlar"] - m["Alacak_Onlar"]
@@ -691,6 +720,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             durum_txt = "✅ Tam Eşleşti"
                         elif ref_ok and date_ok:
                             durum_txt = "🟡 Ref ve Tarih Eşleşti"
+                            # Tarih eşit ama tutar farkı varsa gene görebil
                         elif ref_ok:
                             durum_txt = "🟡 Ödeme Ref Eşleşti"
                         else:
@@ -743,6 +773,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
         except Exception as e:
             st.error(f"Hata: {e}")
 
+
 # --- 5. SONUÇ EKRANI ---
 if st.session_state.get('analiz_yapildi', False):
     res = st.session_state['sonuclar']
@@ -789,6 +820,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

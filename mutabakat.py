@@ -657,9 +657,9 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                     used = set()
                     
                     for idx, row_p in pay_biz.iterrows():
-                        biz_pid = r["Payment_ID"]
-                        biz_amt = abs(r["Borc"] - r["Alacak"])
-                        biz_cur = r["Para_Birimi"]
+                        biz_pid = row_p["Payment_ID"]
+                        biz_amt = abs(row_p["Borc"] - row_p["Alacak"])
+                        biz_cur = row_p["Para_Birimi"]
 
                         found_idx = None
 
@@ -706,7 +706,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 # Karşı taraftaki eşleşmeyen ödemeler
                     for idx, r in pay_onlar.iterrows():
                         if idx not in used:
-                             un_onlar.append({
+                            un_onlar.append({
                                  "Durum": "🔵 Onlarda Var (Ödeme)",
                                  "Ödeme Ref": r["Payment_ID"],
                                  "Tarih": safe_strftime(r["Tarih_Odeme"]),
@@ -775,6 +775,7 @@ if st.session_state.get('analiz_yapildi', False):
         st.dataframe(res.get("un_biz", pd.DataFrame()), use_container_width=True)
     with tabs[4]:
         st.dataframe(res.get("un_onlar", pd.DataFrame()), use_container_width=True)
+
 
 
 

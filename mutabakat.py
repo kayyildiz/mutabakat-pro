@@ -318,43 +318,99 @@ def _num(x):
    except:
        return 0.0
 
-# --- Fatura tutarını rol kuralına göre seçen fonksiyon ---
+def _to_float(val):
+    """
+    NaN, None, boş string, karışık tip vs. ne gelirse gelsin
+    güvenli şekilde float'a çevirir. Boş ise 0 döner.
+    """
+    try:
+        if isinstance(val, (pd.Series, list, tuple)):
+            val = val.iloc[0] if hasattr(val, "iloc") else val[0]
+    except Exception:
+        pass
+
+    # pandas NaN kontrolü
+    try:
+        if pd.isna(val):
+            return 0.0
+    except Exception:
+        pass
+
+    if val is None:
+        return 0.0
+
+    if isinstance(val, str):
+        s = val.strip()
+        if s == "":
+            return 0.0
+        # 1.000,50 → 1000.50 dönüştürme
+        s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
+
+    try:
+        return float(val)
+    except Exception:
+        return 0.0
+
+
 
 def hesap_fatura_tutar(m, rol_kodu):
-   # Kolonları güvenli şekilde sayıya çevir
-   bb = _num(m.get("Borc_Biz"))       # Biz Borç
-   ba = _num(m.get("Alacak_Biz"))    # Biz Alacak
-   ob = _num(m.get("Borc_Onlar"))    # Onlar Borç
-   oa = _num(m.get("Alacak_Onlar"))  # Onlar Alacak
-   candidates = []
-   if rol_kodu == "Biz Alıcıyız":
-       # 1) Normal fatura: Biz Alacak, Onlar Borç
-       if (ba != 0) or (ob != 0):
-           diff1 = ob - ba
-           candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff1))
-       # 2) İade: Biz Borç, Onlar Alacak
-       if (bb != 0) or (oa != 0):
-           diff2 = oa - bb
-           candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff2))
-   else:  # Biz Satıcıyız
-       # 1) Normal fatura: Biz Borç, Onlar Alacak
-       if (bb != 0) or (oa != 0):
-           diff1 = oa - bb
-           candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff1))
-       # 2) İade: Biz Alacak, Onlar Borç
-       if (ba != 0) or (ob != 0):
-           diff2 = ob - ba
-           candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff2))
-   # Hiç aday yoksa (hem bizde hem onlarda 0 gibi durumlar)
-   if not candidates:
-       my_net = bb - ba
-       their_net = ob - oa
-       diff = their_net - my_net  # yön neyse ona göre ayarlarsın, şu an örnek
-       return my_net, their_net, diff
-   # Farka en yakın (mutlak değeri en küçük) adayı seç
-   best = min(candidates, key=lambda x: abs(x[3]))
-   _, my_amt, their_amt, diff = best
-   return my_amt, their_amt, diff
+    """
+    Biz Alıcı / Satıcı rolüne göre hangi kolonların karşılaştırılacağı seçilir.
+    Eksik kolonlar otomatik 0 kabul edilir.
+    En düşük farka sahip senaryo döner.
+    """
+
+    # Her türlü değeri güvenli şekilde al (yoksa 0)
+    bb = _to_float(m.get("Borc_Biz", 0))
+    ba = _to_float(m.get("Alacak_Biz", 0))
+    ob = _to_float(m.get("Borc_Onlar", 0))
+    oa = _to_float(m.get("Alacak_Onlar", 0))
+
+    candidates = []
+
+    # ---- BİZ ALICIYIZ ----
+    if rol_kodu == "Biz Alıcıyız":
+
+        # Normal senaryo: Biz alacak → Onlar borç
+        if ba != 0 or ob != 0:
+            diff1 = ob - ba
+            candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff1))
+
+        # İade senaryosu: Biz borç → Onlar alacak
+        if bb != 0 or oa != 0:
+            diff2 = oa - bb
+            candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff2))
+
+    # ---- BİZ SATICIYIZ ----
+    else:
+
+        # Normal fatura: Biz borç → Onlar alacak
+        if bb != 0 or oa != 0:
+            diff1 = oa - bb
+            candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff1))
+
+        # İade fatura: Biz alacak → Onlar borç
+        if ba != 0 or ob != 0:
+            diff2 = ob - ba
+            candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff2))
+
+    # Eğer tüm kolonlar 0 ise default hesap
+    if not candidates:
+        my_net = bb - ba
+        their_net = ob - oa
+        diff = their_net - my_net
+        return my_net, their_net, diff
+
+    # En düşük mutlak farka sahip senaryoyu seç
+    best = min(candidates, key=lambda x: abs(x[3]))
+    _, my_amt, their_amt, diff = best
+    
+    return my_amt, their_amt, diff
+
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])
@@ -588,8 +644,8 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                     }
 
                     if doviz_raporda:
-                        dv_biz_val = float(m.get("Doviz_Tutari_Biz", 0) or 0)
-                        dv_onlar_val = float(m.get("Doviz_Tutari_Onlar", 0) or 0)
+                        dv_biz_val = _to_float(m.get("Doviz_Tutari_Biz"))
+                        dv_onlar_val = _to_float(m.get("Doviz_Tutari_Onlar"))
                         d["PB"] = m["Para_Birimi_Biz"]
                         d["Döviz (Biz)"] = dv_biz_val
                         d["Döviz (Onlar)"] = dv_onlar_val
@@ -608,6 +664,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                     eslesenler.append(d)
                     matched_biz_idx.add(m["unique_idx_Biz"])
                     matched_onlar_idx.add(m["unique_idx_Onlar"])
+
 
                 # --------- BİZDE VAR (FATURA) -----------------
                 for _, row_b in grp_biz.iterrows():

@@ -301,51 +301,60 @@ def grupla(df, is_doviz_aktif):
     final = pd.concat([df_grp, df_noids], ignore_index=True)
     final['unique_idx'] = final.index
     return final
+def _num(x):
+   """NaN, None, boş string vs. ne gelirse gelsin güvenli şekilde float'a çevir, boşsa 0 yap."""
+   try:
+       if x is None:
+           return 0.0
+       if isinstance(x, str):
+           s = x.strip().replace(",", ".")
+           if s == "":
+               return 0.0
+           return float(s)
+       # pandas NaN kontrolü
+       if pd.isna(x):
+           return 0.0
+       return float(x)
+   except:
+       return 0.0
 
 # --- Fatura tutarını rol kuralına göre seçen fonksiyon ---
 
 def hesap_fatura_tutar(m, rol_kodu):
-    # Kolonları güvenli şekilde sayıya çevir
-    bb = float(m.get("Borc_Biz", 0) or 0)       # Biz Borç
-    ba = float(m.get("Alacak_Biz", 0) or 0)    # Biz Alacak
-    ob = float(m.get("Borc_Onlar", 0) or 0)    # Onlar Borç
-    oa = float(m.get("Alacak_Onlar", 0) or 0)  # Onlar Alacak
-
-    candidates = []
-
-    if rol_kodu == "Biz Alıcıyız":
-        # 1) Normal fatura: Biz Alacak, Onlar Borç
-        if (ba != 0) or (ob != 0):
-            diff1 = ob - ba
-            candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff1))
-
-        # 2) İade: Biz Borç, Onlar Alacak
-        if (bb != 0) or (oa != 0):
-            diff2 = oa - bb
-            candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff2))
-
-    else:  # Biz Satıcıyız
-        # 1) Normal fatura: Biz Borç, Onlar Alacak
-        if (bb != 0) or (oa != 0):
-            diff1 = oa - bb
-            candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff1))
-
-        # 2) İade: Biz Alacak, Onlar Borç
-        if (ba != 0) or (ob != 0):
-            diff2 = ob - ba
-            candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff2))
-
-    # Hiç aday yoksa (tuhaf durum), eski net mantığına düş
-    if not candidates:
-        my_net = bb - ba
-        their_net = ob - oa
-        diff = my_net + their_net
-        return my_net, their_net, diff
-
-    # Farka en yakın (mutlak değeri en küçük) adayı seç
-    best = min(candidates, key=lambda x: abs(x[3]))
-    _, my_amt, their_amt, diff = best
-    return my_amt, their_amt, diff
+   # Kolonları güvenli şekilde sayıya çevir
+   bb = _num(m.get("Borc_Biz"))       # Biz Borç
+   ba = _num(m.get("Alacak_Biz"))    # Biz Alacak
+   ob = _num(m.get("Borc_Onlar"))    # Onlar Borç
+   oa = _num(m.get("Alacak_Onlar"))  # Onlar Alacak
+   candidates = []
+   if rol_kodu == "Biz Alıcıyız":
+       # 1) Normal fatura: Biz Alacak, Onlar Borç
+       if (ba != 0) or (ob != 0):
+           diff1 = ob - ba
+           candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff1))
+       # 2) İade: Biz Borç, Onlar Alacak
+       if (bb != 0) or (oa != 0):
+           diff2 = oa - bb
+           candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff2))
+   else:  # Biz Satıcıyız
+       # 1) Normal fatura: Biz Borç, Onlar Alacak
+       if (bb != 0) or (oa != 0):
+           diff1 = oa - bb
+           candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff1))
+       # 2) İade: Biz Alacak, Onlar Borç
+       if (ba != 0) or (ob != 0):
+           diff2 = ob - ba
+           candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff2))
+   # Hiç aday yoksa (hem bizde hem onlarda 0 gibi durumlar)
+   if not candidates:
+       my_net = bb - ba
+       their_net = ob - oa
+       diff = their_net - my_net  # yön neyse ona göre ayarlarsın, şu an örnek
+       return my_net, their_net, diff
+   # Farka en yakın (mutlak değeri en küçük) adayı seç
+   best = min(candidates, key=lambda x: abs(x[3]))
+   _, my_amt, their_amt, diff = best
+   return my_amt, their_amt, diff
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])

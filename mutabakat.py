@@ -239,19 +239,21 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
 
     # Tutar
     if "Tek Kolon" in config['tutar_tipi']:
-        col_name = config['tutar_col']
-        ham = pd.to_numeric(df_copy[col_name], errors='coerce').fillna(0)
-        rol = config.get('rol_kodu', 'Biz Alıcıyız')
+    col_name = config['tutar_col']
+    # Virgüllü, noktalı, string her şeyi güvenli çevir
+    ham = df_copy[col_name].apply(_to_float)
+    rol = config.get('rol_kodu', 'Biz Alıcıyız')
 
-        if rol == "Biz Alıcıyız":
-            df_new['Borc'] = ham.where(ham > 0, 0)
-            df_new['Alacak'] = ham.where(ham < 0, 0).abs()
-        else:
-            df_new['Alacak'] = ham.where(ham > 0, 0)
-            df_new['Borc'] = ham.where(ham < 0, 0).abs()
+    if rol == "Biz Alıcıyız":
+        df_new['Borc'] = ham.where(ham > 0, 0)
+        df_new['Alacak'] = ham.where(ham < 0, 0).abs()
     else:
-        df_new['Borc'] = pd.to_numeric(df_copy[config['borc_col']], errors='coerce').fillna(0)
-        df_new['Alacak'] = pd.to_numeric(df_copy[config['alacak_col']], errors='coerce').fillna(0)
+        df_new['Alacak'] = ham.where(ham > 0, 0)
+        df_new['Borc'] = ham.where(ham < 0, 0).abs()
+    else:
+    # Ayrı kolonlar da aynı şekilde güvenli parse edilsin
+    df_new['Borc'] = df_copy[config['borc_col']].apply(_to_float)
+    df_new['Alacak'] = df_copy[config['alacak_col']].apply(_to_float)
 
     # --- 2) Ödeme satırlarını ayır ---
     # Ödeme = Payment_ID dolu satırlar

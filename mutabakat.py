@@ -361,70 +361,67 @@ def _to_float(val):
 
 def hesap_fatura_tutar(m, rol_kodu):
     """
-    GÜNCELLENMİŞ VERSİYON:
-    Hem çapraz (Borç-Alacak) hem de paralel (Borç-Borç / Alacak-Alacak) 
-    eşleşmeleri kontrol eder. Dosyalardaki eksi/artı işaret farklılıklarını tolere eder.
+    Biz Alıcı / Satıcı rolüne göre hangi kolonların karşılaştırılacağı seçilir.
+    1) Önce klasik senaryolar denenir (normal fatura / iade).
+    2) Hiçbiri uymuyorsa, sıfır olmayan kolonlara göre fallback yapılır.
     """
 
-    # Değerleri güvenli al
+    # Her türlü değeri güvenli şekilde al (yoksa 0)
     bb = _to_float(m.get("Borc_Biz", 0))
     ba = _to_float(m.get("Alacak_Biz", 0))
     ob = _to_float(m.get("Borc_Onlar", 0))
     oa = _to_float(m.get("Alacak_Onlar", 0))
 
-    scenarios = []
+    # -----------------------------
+    # BİZ ALICIYIZ
+    # -----------------------------
+    if rol_kodu == "Biz Alıcıyız":
+        # 1) Normal fatura: Biz alacak, onlar borç
+        if ba != 0 and ob != 0:
+            my_amt = ba
+            their_amt = ob
+            diff = their_amt - my_amt
+            return my_amt, their_amt, diff
 
-    # 1. SENARYO: Çapraz Eşleşme (Standart Muhasebe)
-    # Biz Borçluysak -> Onlar Alacaklı olmalı (veya tam tersi)
-    scenarios.append({
-        "type": "cross_1",
-        "biz": bb, 
-        "onlar": oa, 
-        "diff": oa - bb
-    })
-    scenarios.append({
-        "type": "cross_2",
-        "biz": ba, 
-        "onlar": ob, 
-        "diff": ob - ba
-    })
+        # 2) İade fatura: Biz borç, onlar alacak
+        if bb != 0 and oa != 0:
+            my_amt = bb
+            their_amt = oa
+            diff = their_amt - my_amt
+            return my_amt, their_amt, diff
 
-    # 2. SENARYO: Paralel Eşleşme (İşaret Hatası / Ters Kayıt Durumu)
-    # Excel'den gelen verilerin ikisi de eksi veya ikisi de artı ise buraya düşerler.
-    # Bu kontrolü eklemezsek, "Tutar (Onlar)" 0 görünür.
-    scenarios.append({
-        "type": "parallel_1",
-        "biz": bb, 
-        "onlar": ob, 
-        "diff": ob - bb
-    })
-    scenarios.append({
-        "type": "parallel_2",
-        "biz": ba, 
-        "onlar": oa, 
-        "diff": oa - ba
-    })
+        # 3) Fallback: hangi tarafta tutar varsa onu kullan
+        # Biz tarafı: önce alacak doluysa onu, yoksa borç
+        my_amt = ba if ba != 0 else bb
+        # Onlar tarafı: önce borç doluysa onu, yoksa alacak
+        their_amt = ob if ob != 0 else oa
+        diff = their_amt - my_amt
+        return my_amt, their_amt, diff
 
-    # --- SEÇİM MANTIĞI ---
-    
-    # Adım 1: Her iki tarafın da DOLU (0 olmayan) olduğu senaryoları bul.
-    # Çünkü en kaliteli eşleşme, iki tarafın da rakam belirttiği eşleşmedir.
-    valid_scenarios = [
-        s for s in scenarios 
-        if abs(s["biz"]) > 0.001 and abs(s["onlar"]) > 0.001
-    ]
-
-    best = None
-
-    if valid_scenarios:
-        # İki tarafın da dolu olduğu senaryolardan farkı en düşük olanı seç
-        best = min(valid_scenarios, key=lambda x: abs(x["diff"]))
+    # -----------------------------
+    # BİZ SATICIYIZ
+    # -----------------------------
     else:
-        # Eğer hiç karşılıklı dolu senaryo yoksa (biri gerçekten 0 ise),
-        # tüm olasılıklar içinden farkı en az olanı seç.
-        best = min(scenarios, key=lambda x: abs(x["diff"]))
+        # 1) Normal fatura: Biz borç, onlar alacak
+        if bb != 0 and oa != 0:
+            my_amt = bb
+            their_amt = oa
+            diff = their_amt - my_amt
+            return my_amt, their_amt, diff
 
-    return best["biz"], best["onlar"], best["diff"]
+        # 2) İade fatura: Biz alacak, onlar borç
+        if ba != 0 and ob != 0:
+            my_amt = ba
+            their_amt = ob
+            diff = their_amt - my_amt
+            return my_amt, their_amt, diff
+
+        # 3) Fallback: Biz tarafında hangi kolon doluysa onu,
+        # Onlar tarafında da rolün beklediği + alternatif kolon
+        my_amt = bb if bb != 0 else ba
+        their_amt = oa if oa != 0 else ob
+        diff = their_amt - my_amt
+        return my_amt, their_amt, diff
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])

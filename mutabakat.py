@@ -361,28 +361,70 @@ def _to_float(val):
 
 def hesap_fatura_tutar(m, rol_kodu):
     """
-    Biz / Onlar tarafında Borç–Alacak kolonları nasıl dolu olursa olsun
-    önce her iki taraf için NET tutarı hesaplar.
-    - Tutar (Biz)  = |Borc_Biz - Alacak_Biz|
-    - Tutar (Onlar)= |Borc_Onlar - Alacak_Onlar|
-    Bu sayede bizim tarafta hiç veri varken 0 yazma problemi ortadan kalkar.
-    Fark (TL) için Onlar - Biz alınır.
+    GÜNCELLENMİŞ VERSİYON:
+    Hem çapraz (Borç-Alacak) hem de paralel (Borç-Borç / Alacak-Alacak) 
+    eşleşmeleri kontrol eder. Dosyalardaki eksi/artı işaret farklılıklarını tolere eder.
     """
 
-    # Güvenli şekilde sayıya çevir
+    # Değerleri güvenli al
     bb = _to_float(m.get("Borc_Biz", 0))
     ba = _to_float(m.get("Alacak_Biz", 0))
     ob = _to_float(m.get("Borc_Onlar", 0))
     oa = _to_float(m.get("Alacak_Onlar", 0))
 
-    # Her iki taraf için net tutar (mutlak değer)
-    my_amt = abs(bb - ba)
-    their_amt = abs(ob - oa)
+    scenarios = []
 
-    # Farkı Onlar - Biz olarak alıyorum
-    diff = their_amt - my_amt
+    # 1. SENARYO: Çapraz Eşleşme (Standart Muhasebe)
+    # Biz Borçluysak -> Onlar Alacaklı olmalı (veya tam tersi)
+    scenarios.append({
+        "type": "cross_1",
+        "biz": bb, 
+        "onlar": oa, 
+        "diff": oa - bb
+    })
+    scenarios.append({
+        "type": "cross_2",
+        "biz": ba, 
+        "onlar": ob, 
+        "diff": ob - ba
+    })
 
-    return my_amt, their_amt, diff
+    # 2. SENARYO: Paralel Eşleşme (İşaret Hatası / Ters Kayıt Durumu)
+    # Excel'den gelen verilerin ikisi de eksi veya ikisi de artı ise buraya düşerler.
+    # Bu kontrolü eklemezsek, "Tutar (Onlar)" 0 görünür.
+    scenarios.append({
+        "type": "parallel_1",
+        "biz": bb, 
+        "onlar": ob, 
+        "diff": ob - bb
+    })
+    scenarios.append({
+        "type": "parallel_2",
+        "biz": ba, 
+        "onlar": oa, 
+        "diff": oa - ba
+    })
+
+    # --- SEÇİM MANTIĞI ---
+    
+    # Adım 1: Her iki tarafın da DOLU (0 olmayan) olduğu senaryoları bul.
+    # Çünkü en kaliteli eşleşme, iki tarafın da rakam belirttiği eşleşmedir.
+    valid_scenarios = [
+        s for s in scenarios 
+        if abs(s["biz"]) > 0.001 and abs(s["onlar"]) > 0.001
+    ]
+
+    best = None
+
+    if valid_scenarios:
+        # İki tarafın da dolu olduğu senaryolardan farkı en düşük olanı seç
+        best = min(valid_scenarios, key=lambda x: abs(x["diff"]))
+    else:
+        # Eğer hiç karşılıklı dolu senaryo yoksa (biri gerçekten 0 ise),
+        # tüm olasılıklar içinden farkı en az olanı seç.
+        best = min(scenarios, key=lambda x: abs(x["diff"]))
+
+    return best["biz"], best["onlar"], best["diff"]
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])

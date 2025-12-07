@@ -747,6 +747,8 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 # =========================================================
                 #  ÖDEME EŞLEŞTİRME (REF / TUTAR / PB)
                 # =========================================================
+                # Değişiklik: "AND" yerine "OR" kullandık. 
+                # Herhangi bir tarafta ödeme varsa, ödeme döngüsü çalışmalı ki eşleşmeyenler "(Ödeme)" etiketiyle raporlansın.
                 if not pay_biz.empty or not pay_onlar.empty:
                     dict_onlar_pay_by_ref = {}
                     dict_onlar_pay_by_amt = {}
@@ -815,12 +817,9 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                             eslesen_odeme.append(kayit)
 
                         else:
-                            # EŞLEŞMEYEN BİZİM ÖDEME
-                            # Buradaki anahtar isimlerini "Bizde Var" listesindeki faturalarla
-                            # aynı yapıyoruz (Belge No ve Tutar (Biz))
                             d_un = {
                                 "Durum": "🔴 Bizde Var (Ödeme)",
-                                "Belge No": biz_pid,
+                                "Ödeme Ref": biz_pid,
                                 "Tarih": safe_strftime(row_p.get("Tarih_Odeme", row_p["Tarih"])),
                                 "Tutar (Biz)": biz_amt,
                                 "PB": biz_cur,
@@ -834,7 +833,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         if idx not in used:
                             d_un = {
                                 "Durum": "🔵 Onlarda Var (Ödeme)",
-                                "Belge No": r.get("Payment_ID", ""),
+                                "Ödeme Ref": r.get("Payment_ID", ""),
                                 "Tarih": safe_strftime(r.get("Tarih_Odeme", r["Tarih"])),
                                 "Tutar (Onlar)": abs(r["Borc"] - r["Alacak"]),
                                 "PB": r.get("Para_Birimi", "TRY"),

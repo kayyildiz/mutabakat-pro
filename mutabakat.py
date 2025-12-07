@@ -683,11 +683,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 # --------- BİZDE VAR (FATURA) -----------------
                 for _, row_b in grp_biz.iterrows():
                     if row_b["unique_idx"] not in matched_biz_idx:
-                        # EĞER BU SATIR BİR ÖDEME İSE, BURADA EKLEME!
-                        # Aşağıdaki ödeme döngüsünde (pay_biz) işlenecek ve "(Ödeme)" etiketi alacak.
-                        if str(row_b.get("Payment_ID", "")).strip() != "":
-                            continue
-
                         amt = row_b["Borc"] - row_b["Alacak"]
                         d_un = {
                             "Durum": "🔴 Bizde Var",
@@ -702,10 +697,6 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 # --------- ONLARDA VAR (FATURA) -----------------
                 for _, row_o in grp_onlar.iterrows():
                     if row_o["unique_idx"] not in matched_onlar_idx:
-                        # EĞER BU SATIR BİR ÖDEME İSE, BURADA EKLEME!
-                        if str(row_o.get("Payment_ID", "")).strip() != "":
-                            continue
-                        
                         amt = row_o["Borc"] - row_o["Alacak"]
                         d_un = {
                             "Durum": "🔵 Onlarda Var",
@@ -720,9 +711,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                 # =========================================================
                 #  ÖDEME EŞLEŞTİRME (REF / TUTAR / PB)
                 # =========================================================
-                # Değişiklik: "AND" yerine "OR" kullandık. 
-                # Herhangi bir tarafta ödeme varsa, ödeme döngüsü çalışmalı ki eşleşmeyenler "(Ödeme)" etiketiyle raporlansın.
-                if not pay_biz.empty or not pay_onlar.empty:
+                if not pay_biz.empty and not pay_onlar.empty:
                     dict_onlar_pay_by_ref = {}
                     dict_onlar_pay_by_amt = {}
 

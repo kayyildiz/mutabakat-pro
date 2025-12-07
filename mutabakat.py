@@ -361,88 +361,84 @@ def _to_float(val):
 
 def hesap_fatura_tutar(m, rol_kodu):
     """
-    Biz Alıcı / Satıcı rolüne göre hangi kolonların karşılaştırılacağı seçilir.
-    Hem çapraz (Biz Borç - Onlar Alacak / Biz Alacak - Onlar Borç)
-    hem de paralel (Borç-Borç, Alacak-Alacak) senaryoları dener.
-    En düşük mutlak farka sahip senaryoyu döner.
+    Biz Alıcı / Biz Satıcı rolüne göre:
+      - Önce çapraz senaryoları dener (normal + iade)
+      - Çapraz işe yaramazsa paralel senaryolara bakar (Borc-Borc, Alacak-Alacak)
+      - En düşük mutlak farka sahip senaryonun tutarlarını döner.
     """
 
-    # Her türlü değeri güvenli şekilde al (yoksa 0)
+    # Değerleri güvenli al
     bb = _to_float(m.get("Borc_Biz", 0))      # Biz Borç
     ba = _to_float(m.get("Alacak_Biz", 0))    # Biz Alacak
     ob = _to_float(m.get("Borc_Onlar", 0))    # Onlar Borç
     oa = _to_float(m.get("Alacak_Onlar", 0))  # Onlar Alacak
 
-    scenarios = []
+    cross_scenarios = []
 
-    # --- ROL TEMELLİ ANA SENARYOLAR ---
+    # --- ROL TEMELLİ ÇAPRAZ SENARYOLAR ---
 
     if rol_kodu == "Biz Alıcıyız":
-        # Normal fatura: Biz Alacak, Onlar Borç
-        scenarios.append({
-            "name": "normal_BizAlacak_OnlarBorc",
-            "biz": ba,
-            "onlar": ob,
-        })
-        # İade fatura: Biz Borç, Onlar Alacak
-        scenarios.append({
-            "name": "iade_BizBorc_OnlarAlacak",
-            "biz": bb,
-            "onlar": oa,
-        })
+        # Normal: Biz Alacak, Onlar Borç
+        cross_scenarios.append(("normal_BizAlacak_OnlarBorc", ba, ob))
+        # İade: Biz Borç, Onlar Alacak
+        cross_scenarios.append(("iade_BizBorc_OnlarAlacak", bb, oa))
     else:
         # Biz Satıcıyız
-        # Normal fatura: Biz Borç, Onlar Alacak
-        scenarios.append({
-            "name": "normal_BizBorc_OnlarAlacak",
-            "biz": bb,
-            "onlar": oa,
-        })
-        # İade fatura: Biz Alacak, Onlar Borç
-        scenarios.append({
-            "name": "iade_BizAlacak_OnlarBorc",
-            "biz": ba,
-            "onlar": ob,
-        })
+        # Normal: Biz Borç, Onlar Alacak
+        cross_scenarios.append(("normal_BizBorc_OnlarAlacak", bb, oa))
+        # İade: Biz Alacak, Onlar Borç
+        cross_scenarios.append(("iade_BizAlacak_OnlarBorc", ba, ob))
 
-    # --- PARALEL SENARYOLAR (işaret / kolon hatalarını tolere etmek için) ---
-
-    scenarios.append({
-        "name": "parallel_Borc_Borc",
-        "biz": bb,
-        "onlar": ob,
-    })
-    scenarios.append({
-        "name": "parallel_Alacak_Alacak",
-        "biz": ba,
-        "onlar": oa,
-    })
-
-    # Diff hesapla
-    for s in scenarios:
-        s["diff"] = s["onlar"] - s["biz"]
-
-    # 1) Hem biz hem onlar > 0 olan senaryoları tercih et
-    valid_both = [
-        s for s in scenarios
-        if abs(s["biz"]) > 0.001 and abs(s["onlar"]) > 0.001
+    # --- PARALEL SENARYOLAR (işaret / kolon kayması için) ---
+    parallel_scenarios = [
+        ("parallel_Borc_Borc", bb, ob),
+        ("parallel_Alacak_Alacak", ba, oa),
     ]
 
-    if valid_both:
-        best = min(valid_both, key=lambda x: abs(x["diff"]))
-    else:
-        # 2) En az bir tarafı dolu olanlardan en düşük farka sahip olanı al
-        valid_any = [
-            s for s in scenarios
-            if abs(s["biz"]) > 0.001 or abs(s["onlar"]) > 0.001
-        ]
-        if not valid_any:
-            # Gerçekten tamamen boş satırsa:
-            return 0.0, 0.0, 0.0
-        best = min(valid_any, key=lambda x: abs(x["diff"]))
+    def with_diff(scenarios):
+        out = []
+        for name, my_amt, their_amt in scenarios:
+            diff = their_amt - my_amt
+            out.append({
+                "name": name,
+                "biz": my_amt,
+                "onlar": their_amt,
+                "diff": diff
+            })
+        return out
 
-    return best["biz"], best["onlar"], best["diff"]
+    cross = with_diff(cross_scenarios)
+    parallel = with_diff(parallel_scenarios)
 
+    def both_nonzero(s):
+        return abs(s["biz"]) > 0.001 and abs(s["onlar"]) > 0.001
+
+    def any_nonzero(s):
+        return abs(s["biz"]) > 0.001 or abs(s["onlar"]) > 0.001
+
+    # 1) Önce rol kuralına uygun ÇAPRAZ senaryolarda iki tarafı da dolu olanlara bak
+    cross_both = [s for s in cross if both_nonzero(s)]
+    if cross_both:
+        best = min(cross_both, key=lambda x: abs(x["diff"]))
+        return best["biz"], best["onlar"], best["diff"]
+
+    # 2) Çaprazlar işe yaramadıysa, PARALEL senaryolarda (Borc-Borc / Alacak-Alacak)
+    #    iki tarafı da dolu olanlara bak (Vodafone iade örneğin burada yakalanıyor)
+    parallel_both = [s for s in parallel if both_nonzero(s)]
+    if parallel_both:
+        best = min(parallel_both, key=lambda x: abs(x["diff"]))
+        return best["biz"], best["onlar"], best["diff"]
+
+    # 3) Hâlâ yoksa, tüm senaryolar içinde en az bir tarafı dolu olanlardan
+    #    farkı en küçük olanı seç (çok edge case)
+    all_scenarios = cross + parallel
+    any_filled = [s for s in all_scenarios if any_nonzero(s)]
+    if any_filled:
+        best = min(any_filled, key=lambda x: abs(x["diff"]))
+        return best["biz"], best["onlar"], best["diff"]
+
+    # 4) Gerçekten tamamen boş satır
+    return 0.0, 0.0, 0.0
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])

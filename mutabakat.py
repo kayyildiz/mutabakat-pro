@@ -206,7 +206,21 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
         df_new['Tarih_Odeme'] = df_new['Tarih']
 
     # Belge No / Match_ID
-    df_new['Orijinal_Belge_No'] = df_copy[config['belge_col']].astype(str)
+    base = df_copy[config['belge_col']].astype(str)
+
+    # Boş / NaN / "nan" olanları tespit et
+    mask_empty = base.isna() | base.str.strip().eq("") | base.str.strip().str.lower().eq("nan")
+
+    # Eğer başka bir "Referans / Reference" kolonu varsa, boşları onunla doldur
+    alt_ref_cols = [c for c in df_copy.columns
+                    if c != config['belge_col'] and re.search(r'ref|referans', str(c), re.IGNORECASE)]
+    
+    if alt_ref_cols:
+        alt = df_copy[alt_ref_cols[0]].astype(str)
+        base = base.where(~mask_empty, alt)
+
+    df_new['Orijinal_Belge_No'] = base
+
     df_new['Match_ID'] = df_new['Orijinal_Belge_No'].apply(
         lambda x: ''.join(filter(str.isdigit, str(x)))
     )

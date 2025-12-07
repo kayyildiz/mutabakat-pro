@@ -361,67 +361,97 @@ def _to_float(val):
 
 def hesap_fatura_tutar(m, rol_kodu):
     """
-    Biz Alıcı / Satıcı rolüne göre hangi kolonların karşılaştırılacağı seçilir.
-    1) Önce klasik senaryolar denenir (normal fatura / iade).
-    2) Hiçbiri uymuyorsa, sıfır olmayan kolonlara göre fallback yapılır.
+    GÜNCELLENMİŞ VERSİYON (V3 - ABSOLUTE):
+    İade faturaları veya ters kayıtlar (eksi bakiye) nedeniyle oluşan
+    işaret farklarını tamamen yok sayarak, MUTLAK DEĞER üzerinden eşleştirme yapar.
     """
 
-    # Her türlü değeri güvenli şekilde al (yoksa 0)
-    bb = _to_float(m.get("Borc_Biz", 0))
-    ba = _to_float(m.get("Alacak_Biz", 0))
-    ob = _to_float(m.get("Borc_Onlar", 0))
-    oa = _to_float(m.get("Alacak_Onlar", 0))
+    # Değerleri güvenli al (Hepsinin mutlak değerini de tutalım)
+    bb_raw = _to_float(m.get("Borc_Biz", 0))
+    ba_raw = _to_float(m.get("Alacak_Biz", 0))
+    ob_raw = _to_float(m.get("Borc_Onlar", 0))
+    oa_raw = _to_float(m.get("Alacak_Onlar", 0))
 
-    # -----------------------------
-    # BİZ ALICIYIZ
-    # -----------------------------
-    if rol_kodu == "Biz Alıcıyız":
-        # 1) Normal fatura: Biz alacak, onlar borç
-        if ba != 0 and ob != 0:
-            my_amt = ba
-            their_amt = ob
-            diff = their_amt - my_amt
-            return my_amt, their_amt, diff
+    # Tüm olası kombinasyonları deneriz.
+    # Hedef: Hangi ikili birbirine en yakın? (İşaretten bağımsız)
+    
+    scenarios = []
 
-        # 2) İade fatura: Biz borç, onlar alacak
-        if bb != 0 and oa != 0:
-            my_amt = bb
-            their_amt = oa
-            diff = their_amt - my_amt
-            return my_amt, their_amt, diff
+    # Olasılık 1: Bizim Borç vs Onların Alacak (Standart Fatura / İade)
+    diff1 = abs(abs(bb_raw) - abs(oa_raw))
+    scenarios.append({
+        "biz_val": bb_raw,
+        "onlar_val": oa_raw,
+        "diff_abs": diff1,
+        "col_biz": "Borç",
+        "col_onlar": "Alacak"
+    })
 
-        # 3) Fallback: hangi tarafta tutar varsa onu kullan
-        # Biz tarafı: önce alacak doluysa onu, yoksa borç
-        my_amt = ba if ba != 0 else bb
-        # Onlar tarafı: önce borç doluysa onu, yoksa alacak
-        their_amt = ob if ob != 0 else oa
-        diff = their_amt - my_amt
-        return my_amt, their_amt, diff
+    # Olasılık 2: Bizim Alacak vs Onların Borç (Standart Ödeme / Ters İade)
+    diff2 = abs(abs(ba_raw) - abs(ob_raw))
+    scenarios.append({
+        "biz_val": ba_raw,
+        "onlar_val": ob_raw,
+        "diff_abs": diff2,
+        "col_biz": "Alacak",
+        "col_onlar": "Borç"
+    })
 
-    # -----------------------------
-    # BİZ SATICIYIZ
-    # -----------------------------
+    # Olasılık 3: Paralel (Borç vs Borç) - Hatalı kayıtlar için
+    diff3 = abs(abs(bb_raw) - abs(ob_raw))
+    scenarios.append({
+        "biz_val": bb_raw,
+        "onlar_val": ob_raw,
+        "diff_abs": diff3,
+        "col_biz": "Borç",
+        "col_onlar": "Borç"
+    })
+
+    # Olasılık 4: Paralel (Alacak vs Alacak) - Hatalı kayıtlar için
+    diff4 = abs(abs(ba_raw) - abs(oa_raw))
+    scenarios.append({
+        "biz_val": ba_raw,
+        "onlar_val": oa_raw,
+        "diff_abs": diff4,
+        "col_biz": "Alacak",
+        "col_onlar": "Alacak"
+    })
+
+    # --- SEÇİM MANTIĞI ---
+    
+    # Adım 1: Sadece her iki tarafın da 0 olmadığı (dolu olduğu) senaryoları filtrele.
+    valid_scenarios = [
+        s for s in scenarios 
+        if abs(s["biz_val"]) > 0.001 and abs(s["onlar_val"]) > 0.001
+    ]
+
+    best = None
+
+    if valid_scenarios:
+        # Dolu olanlardan farkı en az (mutlak olarak) olanı seç
+        best = min(valid_scenarios, key=lambda x: x["diff_abs"])
     else:
-        # 1) Normal fatura: Biz borç, onlar alacak
-        if bb != 0 and oa != 0:
-            my_amt = bb
-            their_amt = oa
-            diff = their_amt - my_amt
-            return my_amt, their_amt, diff
+        # Eğer karşılıklı dolu yoksa (biri 0 ise), mecburen en düşük farkı seç
+        best = min(scenarios, key=lambda x: x["diff_abs"])
 
-        # 2) İade fatura: Biz alacak, onlar borç
-        if ba != 0 and ob != 0:
-            my_amt = ba
-            their_amt = ob
-            diff = their_amt - my_amt
-            return my_amt, their_amt, diff
+    # Sonuç döndürürken orijinal değerleri (eksi/artı) koruyoruz ki raporda doğru görünsün.
+    # Ancak farkı hesaplarken raporda kafa karışmaması için matematiksel farkı veriyoruz.
+    
+    secilen_biz = best["biz_val"]
+    secilen_onlar = best["onlar_val"]
+    
+    # Fark gösterimi: Eğer mutlak değerler eşitse fark 0'dır.
+    # Değilse matematiksel farkı alırız.
+    if best["diff_abs"] < 0.01:
+        real_diff = 0.0
+    else:
+        # Burada işareti düzeltmek zor olabilir, en temiz yöntem:
+        # Mutlak değerler farkını, Bizim tutarın işaretine göre yansıtmak.
+        # Ama basitçe: Biz - Onlar yapalım.
+        # Not: Farklı işaretli (-100 vs 100) ama mutlak eşitse yukarıdaki if 0 yapacak zaten.
+        real_diff = secilen_biz - secilen_onlar
 
-        # 3) Fallback: Biz tarafında hangi kolon doluysa onu,
-        # Onlar tarafında da rolün beklediği + alternatif kolon
-        my_amt = bb if bb != 0 else ba
-        their_amt = oa if oa != 0 else ob
-        diff = their_amt - my_amt
-        return my_amt, their_amt, diff
+    return secilen_biz, secilen_onlar, real_diff
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])

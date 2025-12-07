@@ -359,62 +359,30 @@ def _to_float(val):
     except Exception:
         return 0.0
 
-
-
 def hesap_fatura_tutar(m, rol_kodu):
     """
-    Biz Alıcı / Satıcı rolüne göre hangi kolonların karşılaştırılacağı seçilir.
-    Eksik kolonlar otomatik 0 kabul edilir.
-    En düşük farka sahip senaryo döner.
+    Biz / Onlar tarafında Borç–Alacak kolonları nasıl dolu olursa olsun
+    önce her iki taraf için NET tutarı hesaplar.
+    - Tutar (Biz)  = |Borc_Biz - Alacak_Biz|
+    - Tutar (Onlar)= |Borc_Onlar - Alacak_Onlar|
+    Bu sayede bizim tarafta hiç veri varken 0 yazma problemi ortadan kalkar.
+    Fark (TL) için Onlar - Biz alınır.
     """
 
-    # Her türlü değeri güvenli şekilde al (yoksa 0)
+    # Güvenli şekilde sayıya çevir
     bb = _to_float(m.get("Borc_Biz", 0))
     ba = _to_float(m.get("Alacak_Biz", 0))
     ob = _to_float(m.get("Borc_Onlar", 0))
     oa = _to_float(m.get("Alacak_Onlar", 0))
 
-    candidates = []
+    # Her iki taraf için net tutar (mutlak değer)
+    my_amt = abs(bb - ba)
+    their_amt = abs(ob - oa)
 
-    # ---- BİZ ALICIYIZ ----
-    if rol_kodu == "Biz Alıcıyız":
+    # Farkı Onlar - Biz olarak alıyorum
+    diff = their_amt - my_amt
 
-        # Normal senaryo: Biz alacak → Onlar borç
-        if ba != 0 or ob != 0:
-            diff1 = ob - ba
-            candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff1))
-
-        # İade senaryosu: Biz borç → Onlar alacak
-        if bb != 0 or oa != 0:
-            diff2 = oa - bb
-            candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff2))
-
-    # ---- BİZ SATICIYIZ ----
-    else:
-
-        # Normal fatura: Biz borç → Onlar alacak
-        if bb != 0 or oa != 0:
-            diff1 = oa - bb
-            candidates.append(("Biz_Borc_Onlar_Alacak", bb, oa, diff1))
-
-        # İade fatura: Biz alacak → Onlar borç
-        if ba != 0 or ob != 0:
-            diff2 = ob - ba
-            candidates.append(("Biz_Alacak_Onlar_Borc", ba, ob, diff2))
-
-    # Eğer tüm kolonlar 0 ise default hesap
-    if not candidates:
-        my_net = bb - ba
-        their_net = ob - oa
-        diff = their_net - my_net
-        return my_net, their_net, diff
-
-    # En düşük mutlak farka sahip senaryoyu seç
-    best = min(candidates, key=lambda x: abs(x[3]))
-    _, my_amt, their_amt, diff = best
-    
     return my_amt, their_amt, diff
-
 
 # --- 3. ARAYÜZ ---
 c_title, c_settings = st.columns([2, 1])

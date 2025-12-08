@@ -589,17 +589,25 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
         try:
             start = time.time()
             with st.spinner('İşleniyor...'):
-                raw_biz, pay_biz, dv_biz = veri_hazirla(d1, cf1, "Biz", ex_biz)
-                grp_biz = grupla(raw_biz, dv_biz)
+             # 1) Ham veri + ödeme satırları
+             raw_biz, pay_biz, dv_biz = veri_hazirla(d1, cf1, "Biz", ex_biz)
+             raw_onlar, pay_onlar, dv_onlar = veri_hazirla(d2, cf2, "Onlar", ex_onlar)
 
-                raw_onlar, pay_onlar, dv_onlar = veri_hazirla(d2, cf2, "Onlar", ex_onlar)
-                grp_onlar = grupla(raw_onlar, dv_onlar)
+             # 2) FATURA satırlarını ödeme satırlarından ayır
+             fat_biz   = raw_biz[~raw_biz["Is_Odeme"]].copy()   # sadece faturalar
+             fat_onlar = raw_onlar[~raw_onlar["Is_Odeme"]].copy()
 
-                doviz_raporda = dv_biz or dv_onlar
+             # 3) Fatura eşleştirme için gruplanmış tablolar
+             grp_biz   = grupla(fat_biz, dv_biz)
+             grp_onlar = grupla(fat_onlar, dv_onlar)
 
-                all_biz = pd.concat([raw_biz, pay_biz]) if not pay_biz.empty else raw_biz
-                all_onlar = pd.concat([raw_onlar, pay_onlar]) if not pay_onlar.empty else raw_onlar
-                df_ozet = ozet_rapor_olustur(all_biz, all_onlar)
+             # 4) Döviz raporda kullanılacak mı?
+             doviz_raporda = dv_biz or dv_onlar
+
+             # 5) Özet rapor (hem fatura hem ödeme; ama çift sayma yok)
+             all_biz   = raw_biz.copy()
+             all_onlar = raw_onlar.copy()
+             df_ozet   = ozet_rapor_olustur(all_biz, all_onlar)
 
                 # ---------------- FATURA / BELGE EŞLEŞTİRME ----------------
                 grp_biz["Match_ID"] = grp_biz["Match_ID"].fillna("").astype(str)

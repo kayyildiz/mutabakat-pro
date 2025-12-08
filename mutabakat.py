@@ -589,25 +589,25 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
         try:
             start = time.time()
             with st.spinner('İşleniyor...'):
-             # 1) Ham veri + ödeme satırları
-             raw_biz, pay_biz, dv_biz = veri_hazirla(d1, cf1, "Biz", ex_biz)
-             raw_onlar, pay_onlar, dv_onlar = veri_hazirla(d2, cf2, "Onlar", ex_onlar)
+                 # 1) Ham veri + ödeme satırları
+                 raw_biz, pay_biz, dv_biz = veri_hazirla(d1, cf1, "Biz", ex_biz)
+                 raw_onlar, pay_onlar, dv_onlar = veri_hazirla(d2, cf2, "Onlar", ex_onlar)
 
-             # 2) FATURA satırlarını ödeme satırlarından ayır
-             fat_biz   = raw_biz[~raw_biz["Is_Odeme"]].copy()   # sadece faturalar
-             fat_onlar = raw_onlar[~raw_onlar["Is_Odeme"]].copy()
+                 # 2) FATURA satırlarını ödeme satırlarından ayır
+                 fat_biz   = raw_biz[~raw_biz["Is_Odeme"]].copy()   # sadece faturalar
+                 fat_onlar = raw_onlar[~raw_onlar["Is_Odeme"]].copy()
 
-             # 3) Fatura eşleştirme için gruplanmış tablolar
-             grp_biz   = grupla(fat_biz, dv_biz)
-             grp_onlar = grupla(fat_onlar, dv_onlar)
+                 # 3) Fatura eşleştirme için gruplanmış tablolar
+                 grp_biz   = grupla(fat_biz, dv_biz)
+                 grp_onlar = grupla(fat_onlar, dv_onlar)
 
-             # 4) Döviz raporda kullanılacak mı?
-             doviz_raporda = dv_biz or dv_onlar
+                 # 4) Döviz raporda kullanılacak mı?
+                 doviz_raporda = dv_biz or dv_onlar
 
-             # 5) Özet rapor (hem fatura hem ödeme; ama çift sayma yok)
-             all_biz   = raw_biz.copy()
-             all_onlar = raw_onlar.copy()
-             df_ozet   = ozet_rapor_olustur(all_biz, all_onlar)
+                 # 5) Özet rapor (hem fatura hem ödeme; ama çift sayma yok)
+                 all_biz   = raw_biz.copy()
+                 all_onlar = raw_onlar.copy()
+                 df_ozet   = ozet_rapor_olustur(all_biz, all_onlar)
 
                 # ---------------- FATURA / BELGE EŞLEŞTİRME ----------------
                 grp_biz["Match_ID"] = grp_biz["Match_ID"].fillna("").astype(str)

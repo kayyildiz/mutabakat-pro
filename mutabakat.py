@@ -277,34 +277,51 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
     return df_new, df_pay_final, doviz_aktif
 
 def grupla(df, is_doviz_aktif):
+    # Her durumda unique_idx oluşsun
     if df.empty:
+        df = df.copy()
+        df['unique_idx'] = df.index
         return df
+
+    df = df.copy()
+
     mask_ids = df['Match_ID'] != ""
     df_ids = df[mask_ids]
     df_noids = df[~mask_ids]
-    
+
+    # Hiç Match_ID yoksa da unique_idx ekleyip dön
     if df_ids.empty:
+        df_noids = df_noids.copy()
+        if 'Doviz_Tutari' not in df_noids.columns:
+            df_noids['Doviz_Tutari'] = 0.0
+        df_noids['unique_idx'] = df_noids.index
         return df_noids
-    
+
     agg_rules = {
-        'Tarih': 'first', 'Tarih_Odeme': 'first', 'Orijinal_Belge_No': 'first', 
-        'Payment_ID': 'first', 'Kaynak': 'first', 'Borc': 'sum', 'Alacak': 'sum', 
+        'Tarih': 'first',
+        'Tarih_Odeme': 'first',
+        'Orijinal_Belge_No': 'first',
+        'Payment_ID': 'first',
+        'Kaynak': 'first',
+        'Borc': 'sum',
+        'Alacak': 'sum',
         'Para_Birimi': 'first'
     }
+
     for col in df.columns:
         if col not in agg_rules and col not in ['Match_ID', 'unique_idx', 'Doviz_Tutari', 'Is_Odeme']:
             agg_rules[col] = 'first'
-            
+
     if is_doviz_aktif:
         def get_real_fx(sub):
             nt = sub[~sub['Para_Birimi'].isin(['TRY', 'TL'])]
             if not nt.empty:
                 return nt['Doviz_Tutari'].sum()
             return 0.0
-        
+
         cols_needed = ['Match_ID', 'Para_Birimi', 'Doviz_Tutari']
         df_sub = df_ids[cols_needed].copy()
-        
+
         df_grp = df_ids.groupby('Match_ID', as_index=False).agg(agg_rules)
         df_grp = df_grp.set_index('Match_ID')
         df_grp['Doviz_Tutari'] = df_sub.groupby('Match_ID').apply(get_real_fx)
@@ -312,7 +329,7 @@ def grupla(df, is_doviz_aktif):
     else:
         df_grp = df_ids.groupby('Match_ID', as_index=False).agg(agg_rules)
         df_grp['Doviz_Tutari'] = 0.0
-        
+
     final = pd.concat([df_grp, df_noids], ignore_index=True)
     final['unique_idx'] = final.index
     return final
@@ -701,9 +718,11 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         d[f"KARŞI: {c}"] = str(m.get(col_on, ""))
 
                     eslesenler.append(d)
-                    matched_biz_idx.add(m["unique_idx_Biz"])
-                    matched_onlar_idx.add(m["unique_idx_Onlar"])
-
+                    if "unique_idx_Biz" in m.index:
+                        matched_biz_idx.add(m["unique_idx_Biz"])
+                    if "unique_idx_Onlar" in m.index:
+                        matched_onlar_idx.add(m["unique_idx_Onlar"])
+                  
                 for _, row_b in grp_biz.iterrows():
                     if row_b["unique_idx"] not in matched_biz_idx:
                         amt = row_b["Borc"] - row_b["Alacak"]

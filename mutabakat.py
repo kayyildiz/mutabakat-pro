@@ -191,7 +191,7 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
             df_new[col] = df_copy[col].astype(str)
 
     # Asıl Belge No (kullanıcının seçtiği kolon aynen)
-    df_new['Belge_No_Asli'] = df_copy[config['belge_col']].astype(str)
+    df_new['Belge_No_Asli'] = df_copy[config['belge_col']]
 
     # Tarihler
     df_new['Tarih'] = pd.to_datetime(df_copy[config['tarih_col']], dayfirst=True, errors='coerce')
@@ -204,7 +204,8 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
         df_new['Tarih_Odeme'] = df_new['Tarih']
 
     # Belge No / Match_ID (boşsa Referans vb. ile doldurma – sadece eşleşme için)
-    base = df_copy[config['belge_col']].astype(str)
+    base = df_copy[config['belge_col']]
+    base = base.astype(str)
     mask_empty = base.isna() | base.str.strip().eq("") | base.str.strip().str.lower().eq("nan")
 
     alt_ref_cols = [c for c in df_copy.columns
@@ -272,7 +273,6 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
         df_new['Alacak'] = df_copy[config['alacak_col']].apply(_to_float)
 
     # --- 2) Ödeme satırlarını ayır ---
-    # Ödeme = Payment_ID dolu OLANLAR + seçilen Ödeme Türü'ne sahip satırlar
     df_pay_final = df_new[df_new['Is_Odeme']].copy()
     df_pay_final['unique_idx'] = df_pay_final.index  # ödeme eşleştirmede kullanılıyor
 
@@ -383,6 +383,33 @@ def _to_float(val):
         return float(val)
     except Exception:
         return 0.0
+
+# --- BELGE NO GÖRÜNTÜLEME YARDIMCI FONKSİYONLARI ---
+
+def _temiz_belge_str(val):
+    """NaN, 'nan', 'None', boşluk vs. ise '' döner; yoksa string hâlini döner."""
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except Exception:
+        pass
+    s = str(val).strip()
+    if s == "" or s.lower() in ["nan", "none"]:
+        return ""
+    return s
+
+def belge_no_goster(asli, orijinal):
+    """
+    Önce Belge_No_Asli'ye bakar; dolu değilse Orijinal_Belge_No'ya döner.
+    İkisi de çöp ise '' döner, 'nan' göstermez.
+    """
+    s1 = _temiz_belge_str(asli)
+    if s1:
+        return s1
+    s2 = _temiz_belge_str(orijinal)
+    return s2
 
 def hesap_fatura_tutar(m, rol_kodu):
     bb = _to_float(m.get("Borc_Biz", 0))
@@ -691,8 +718,11 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
 
                     d = {
                         "Durum": status,
-                        # EKRANDA GÖRÜNECEK BELGE NO = her zaman bizim seçtiğimiz kolon
-                        "Belge No": m.get("Belge_No_Asli_Biz", m["Orijinal_Belge_No_Biz"]),
+                        # EKRANDA GÖRÜNECEK BELGE NO = temizlenmiş asli / orijinal belge no
+                        "Belge No": belge_no_goster(
+                            m.get("Belge_No_Asli_Biz", None),
+                            m.get("Orijinal_Belge_No_Biz", None)
+                        ),
                         "Tarih (Biz)": safe_strftime(m["Tarih_Biz"]),
                         "Tarih (Onlar)": safe_strftime(m["Tarih_Onlar"]),
                         "Tutar (Biz)": my_amt,
@@ -727,7 +757,10 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         amt = row_b["Borc"] - row_b["Alacak"]
                         d_un = {
                             "Durum": "🔴 Bizde Var",
-                            "Belge No": row_b.get("Belge_No_Asli", row_b["Orijinal_Belge_No"]),
+                            "Belge No": belge_no_goster(
+                                row_b.get("Belge_No_Asli", None),
+                                row_b.get("Orijinal_Belge_No", None)
+                            ),
                             "Tarih": safe_strftime(row_b["Tarih"]),
                             "Tutar (Biz)": amt,
                         }
@@ -740,7 +773,10 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         amt = row_o["Borc"] - row_o["Alacak"]
                         d_un = {
                             "Durum": "🔵 Onlarda Var",
-                            "Belge No": row_o.get("Belge_No_Asli", row_o["Orijinal_Belge_No"]),
+                            "Belge No": belge_no_goster(
+                                row_o.get("Belge_No_Asli", None),
+                                row_o.get("Orijinal_Belge_No", None)
+                            ),
                             "Tarih": safe_strftime(row_o["Tarih"]),
                             "Tutar (Onlar)": amt,
                         }

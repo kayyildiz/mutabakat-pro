@@ -190,6 +190,9 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
         if col in df_copy.columns:
             df_new[col] = df_copy[col].astype(str)
 
+    # Asıl Belge No (kullanıcının seçtiği kolon aynen)
+    df_new['Belge_No_Asli'] = df_copy[config['belge_col']].astype(str)
+
     # Tarihler
     df_new['Tarih'] = pd.to_datetime(df_copy[config['tarih_col']], dayfirst=True, errors='coerce')
 
@@ -200,7 +203,7 @@ def veri_hazirla(df, config, taraf_adi, extra_cols=None):
     else:
         df_new['Tarih_Odeme'] = df_new['Tarih']
 
-    # Belge No / Match_ID (boşsa Referans vb. ile doldurma)
+    # Belge No / Match_ID (boşsa Referans vb. ile doldurma – sadece eşleşme için)
     base = df_copy[config['belge_col']].astype(str)
     mask_empty = base.isna() | base.str.strip().eq("") | base.str.strip().str.lower().eq("nan")
 
@@ -301,6 +304,7 @@ def grupla(df, is_doviz_aktif):
         'Tarih': 'first',
         'Tarih_Odeme': 'first',
         'Orijinal_Belge_No': 'first',
+        'Belge_No_Asli': 'first',
         'Payment_ID': 'first',
         'Kaynak': 'first',
         'Borc': 'sum',
@@ -381,12 +385,6 @@ def _to_float(val):
         return 0.0
 
 def hesap_fatura_tutar(m, rol_kodu):
-    """
-    Biz Alıcı / Biz Satıcı rolüne göre:
-      - Önce çapraz senaryoları dener (normal + iade)
-      - Çapraz işe yaramazsa paralel senaryolara bakar (Borc-Borc, Alacak-Alacak)
-      - En düşük mutlak farka sahip senaryonun tutarlarını döner.
-    """
     bb = _to_float(m.get("Borc_Biz", 0))
     ba = _to_float(m.get("Alacak_Biz", 0))
     ob = _to_float(m.get("Borc_Onlar", 0))
@@ -484,7 +482,7 @@ with col1:
         cf1['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi (Valör)", cl1, index=def_pod, key="pd1")
         cf1['odeme_ref_col'] = st.selectbox("Ödeme Ref / Dekont No", cl1, index=def_ref, key="pref1")
 
-        # YENİ: Ödeme Belge Türü kolonu + tür seçimi
+        # Ödeme Belge Türü kolonu + tür seçimi
         def_paydoc1 = get_smart_index(cl1, "Belge Türü", f_name1, 'odeme_tur_col')
         odeme_tur_col1 = st.selectbox("Ödeme Belge Türü Kolonu", cl1, index=def_paydoc1, key="paydoc1")
         cf1['odeme_tur_col'] = odeme_tur_col1
@@ -540,7 +538,7 @@ with col2:
         cf2['tarih_odeme_col'] = st.selectbox("Ödeme Tarihi (Valör)", cl2, index=def_pod2, key="pd2")
         cf2['odeme_ref_col'] = st.selectbox("Ödeme Ref / Dekont No", cl2, index=def_ref2, key="pref2")
 
-        # YENİ: Ödeme Belge Türü kolonu + tür seçimi
+        # Ödeme Belge Türü kolonu + tür seçimi
         def_paydoc2 = get_smart_index(cl2, "Document Type", f_name2, 'odeme_tur_col')
         odeme_tur_col2 = st.selectbox("Ödeme Belge Türü Kolonu", cl2, index=def_paydoc2, key="paydoc2")
         cf2['odeme_tur_col'] = odeme_tur_col2
@@ -693,7 +691,8 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
 
                     d = {
                         "Durum": status,
-                        "Belge No": m["Orijinal_Belge_No_Biz"],
+                        # EKRANDA GÖRÜNECEK BELGE NO = her zaman bizim seçtiğimiz kolon
+                        "Belge No": m.get("Belge_No_Asli_Biz", m["Orijinal_Belge_No_Biz"]),
                         "Tarih (Biz)": safe_strftime(m["Tarih_Biz"]),
                         "Tarih (Onlar)": safe_strftime(m["Tarih_Onlar"]),
                         "Tutar (Biz)": my_amt,
@@ -728,7 +727,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         amt = row_b["Borc"] - row_b["Alacak"]
                         d_un = {
                             "Durum": "🔴 Bizde Var",
-                            "Belge No": row_b["Orijinal_Belge_No"],
+                            "Belge No": row_b.get("Belge_No_Asli", row_b["Orijinal_Belge_No"]),
                             "Tarih": safe_strftime(row_b["Tarih"]),
                             "Tutar (Biz)": amt,
                         }
@@ -741,7 +740,7 @@ if st.button("🚀 Başlat", type="primary", use_container_width=True):
                         amt = row_o["Borc"] - row_o["Alacak"]
                         d_un = {
                             "Durum": "🔵 Onlarda Var",
-                            "Belge No": row_o["Orijinal_Belge_No"],
+                            "Belge No": row_o.get("Belge_No_Asli", row_o["Orijinal_Belge_No"]),
                             "Tarih": safe_strftime(row_o["Tarih"]),
                             "Tutar (Onlar)": amt,
                         }
